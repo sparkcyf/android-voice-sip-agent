@@ -30,6 +30,8 @@ class CellularLeg internal constructor(
     @Volatile internal var call: Call? = null
         private set
     @Volatile private var hangupRequested: HangupCause? = null
+    /** Inbound: the bridge asked us to answer, so an ACTIVE state is ours rather than the user's. */
+    @Volatile private var answerRequested = false
     private val audio = AudioLease { endpoint.log("cell $id audio close failed: ${it.javaClass.simpleName}") }
     internal val stopping: Boolean get() = hangupRequested != null || state == LegState.ENDED
     private var audioAttempt = 0
@@ -62,6 +64,13 @@ class CellularLeg internal constructor(
             Call.STATE_NEW, Call.STATE_CONNECTING, Call.STATE_DIALING, Call.STATE_RINGING,
             Call.STATE_SELECT_PHONE_ACCOUNT, Call.STATE_PULLING_CALL -> transition(LegState.PROCEEDING)
             Call.STATE_ACTIVE -> {
+                if (direction == LegDirection.INBOUND && !answerRequested && state < LegState.CONNECTED) {
+                    // Answered on the phone itself: leave the call to the user with a live microphone
+                    // and no tap; ending the leg cancels the SIP side without disconnecting Telecom.
+                    endpoint.log("cell $id answered on the phone; releasing it to the user")
+                    finish(HangupCause.CANCELLED)
+                    return
+                }
                 if (transition(LegState.CONNECTED)) {
                     endpoint.log("cell $id active")
                     if (!endpoint.canTap(this)) return abortAudio("call no longer eligible")
@@ -189,7 +198,10 @@ class CellularLeg internal constructor(
         main.post {
             if (stopping || !endpoint.owns(this)) return@post
             val c = call ?: return@post
-            if (c.telecomState == Call.STATE_RINGING) c.answer(VideoProfile.STATE_AUDIO_ONLY)
+            if (c.telecomState == Call.STATE_RINGING) {
+                answerRequested = true
+                c.answer(VideoProfile.STATE_AUDIO_ONLY)
+            }
         }
     }
 

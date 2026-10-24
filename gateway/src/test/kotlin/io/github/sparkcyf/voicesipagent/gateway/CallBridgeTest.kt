@@ -76,6 +76,8 @@ class CallBridgeTest {
         settle()
         a.remoteEnded(HangupCause.NORMAL); settle()
         assertEquals("hangup:CANCELLED", sip.dialed.single().actions.last())
+        assertTrue(a.actions.none { it.startsWith("hangup:") || it == "answer" })
+        assertNull(bridge.session)
     }
 
     @Test

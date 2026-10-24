@@ -350,9 +350,11 @@ class PrivilegedService(context: Context) : IPrivilegedService.Stub() {
 
     companion object {
         private const val TAG = "VsaPrivileged"
-        private val PHONE_RUNTIME_PERMISSIONS = listOf(
-            "android.permission.CALL_PHONE",
-            "android.permission.READ_PHONE_STATE",
-        )
+        private val PHONE_RUNTIME_PERMISSIONS = buildList {
+            add("android.permission.CALL_PHONE")
+            add("android.permission.READ_PHONE_STATE")
+            // Android 12 adds the getPhoneAccount() permission check used by isCellular().
+            if (Build.VERSION.SDK_INT >= 31) add("android.permission.READ_PHONE_NUMBERS")
+        }
     }
 }

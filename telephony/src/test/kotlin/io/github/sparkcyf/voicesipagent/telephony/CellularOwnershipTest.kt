@@ -105,8 +105,69 @@ class CellularOwnershipTest {
     }
 
     private fun drainMain() { while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run() }
-    private fun active() { endpoint.onCallAdded(service, call); state(call, Call.STATE_ACTIVE) }
+    private fun active() {
+        endpoint.onCallAdded(service, call)
+        leg.answer(); drainMain()
+        state(call, Call.STATE_ACTIVE)
+    }
     private fun open() { audioTasks.removeFirst().run(); drainMain() }
+
+    @Test fun locallyAnsweredCallIsReleasedWithoutMuteTapOrDisconnect() {
+        endpoint.onCallAdded(service, call)
+        state(call, Call.STATE_ACTIVE)
+        state(call, Call.STATE_ACTIVE) // A duplicate callback must not reclaim the call.
+        drainMain()
+
+        assertEquals(LegState.ENDED, leg.state)
+        assertEquals(HangupCause.CANCELLED, leg.endCause)
+        assertFalse(endpoint.owns(leg))
+        assertTrue(endpoint.hasCalls)
+        assertTrue(audioTasks.isEmpty())
+        assertEquals(0, openCount)
+        assertNull(leg.media)
+        verify(service, never()).setMuted(anyBoolean())
+        verify(call, never()).answer(anyInt())
+        verify(call, never()).disconnect()
+        verify(call, never()).reject(anyBoolean(), nullable(String::class.java))
+
+        // Later gateway cleanup must leave the released handset call alone.
+        leg.hangup(); drainMain()
+        endpoint.setReadiness(false, "gateway disabled"); drainMain()
+        state(call, Call.STATE_DISCONNECTED)
+        endpoint.onCallRemoved(service, call)
+        assertEquals(HangupCause.CANCELLED, leg.endCause)
+        assertFalse(endpoint.hasCalls)
+        verify(call, never()).disconnect()
+    }
+
+    @Test fun queuedGatewayAnswerAfterLocalAnswerDoesNotReclaimCall() {
+        endpoint.onCallAdded(service, call)
+        leg.answer() // Gateway acceptance is queued on main, but the user answers first.
+        state(call, Call.STATE_ACTIVE)
+        drainMain()
+
+        assertEquals(HangupCause.CANCELLED, leg.endCause)
+        assertFalse(endpoint.owns(leg))
+        assertTrue(audioTasks.isEmpty())
+        verify(call, never()).answer(anyInt())
+        verify(call, never()).disconnect()
+        verify(service, never()).setMuted(anyBoolean())
+    }
+
+    @Suppress("DEPRECATION") // Simulate Telecom updating state before delivering its callback.
+    @Test fun alreadyActiveCallDoesNotBecomeGatewayOwnedWhenAnswerTaskRuns() {
+        endpoint.onCallAdded(service, call)
+        leg.answer()
+        doReturn(Call.STATE_ACTIVE).`when`(call).state
+        drainMain()
+        state(call, Call.STATE_ACTIVE)
+
+        assertEquals(HangupCause.CANCELLED, leg.endCause)
+        assertTrue(audioTasks.isEmpty())
+        verify(call, never()).answer(anyInt())
+        verify(call, never()).disconnect()
+        verify(service, never()).setMuted(anyBoolean())
+    }
 
     @Test fun hangupCancelsQueuedOpenBeforeTelecomDisconnects() {
         active()

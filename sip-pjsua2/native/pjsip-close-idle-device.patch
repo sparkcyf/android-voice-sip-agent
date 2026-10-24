@@ -1,7 +1,8 @@
 https://github.com/pjsip/pjproject/pull/5336
---- a/pjsip/src/pjsua-lib/pjsua_aud.c	2026-10-13 14:59:43
-+++ b/pjsip/src/pjsua-lib/pjsua_aud.c	2026-10-13 14:59:43
-@@ -2434,2 +2434,8 @@ PJ_DEF(pj_status_t) pjsua_set_null_snd_dev(void)
+--- a/pjsip/src/pjsua-lib/pjsua_aud.c
++++ b/pjsip/src/pjsua-lib/pjsua_aud.c
+@@ -2433,6 +2433,12 @@
+ 
      pjsua_var.no_snd = PJ_FALSE;
      pjsua_var.snd_is_on = PJ_TRUE;
 +
@@ -10,3 +11,6 @@ https://github.com/pjsip/pjproject/pull/5336
 +     */
 +    if (pjsua_get_state() == PJSUA_STATE_RUNNING)
 +        pjsua_check_snd_dev_idle();
+ 
+     PJSUA_UNLOCK();
+     pj_log_pop_indent();

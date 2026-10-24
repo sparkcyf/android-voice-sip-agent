@@ -60,6 +60,9 @@ class SipUserAgent(
     private val regTag = newTag()
     private var regCseq = 0L
     private var regRefresh: ScheduledFuture<*>? = null
+    private var regExpiry: ScheduledFuture<*>? = null
+    private var regExpiresAtNanos: Long? = null
+    private var regGeneration = 0L
     private var regAuthAttempts = 0
     private var started = false
     private var stopping = false
@@ -92,10 +95,13 @@ class SipUserAgent(
             try {
                 if (!started) { done.countDown(); return@post }
                 stopping = true
+                ++regGeneration
+                clearRegistrationExpiry()
                 calls.values.toList().forEach { leg ->
                     runCatching { leg.hangup(HangupCause.NORMAL) }.onFailure { log.warn("call hangup failed", it) }
                 }
                 regRefresh?.cancel(false)
+                setStatus(false, "stopping")
                 if (!::serverAddr.isInitialized) { done.countDown(); return@post }
                 sendRegister(0, null) { done.countDown() }
             } catch (t: Throwable) {
@@ -171,8 +177,12 @@ class SipUserAgent(
     private fun register() {
         if (stopping) return
         regRefresh?.cancel(false)
+        ++regGeneration
         regAuthAttempts = 0
-        setStatus(false, "registering")
+        // A REGISTER refresh does not invalidate the binding already held by the registrar.
+        // Readiness loss tears down gateway calls, so retain it until failure or actual expiry.
+        val registered = regExpiresAtNanos?.let { it - System.nanoTime() > 0 } == true
+        setStatus(registered, if (registered) "refreshing registration" else "registering")
         try { resolve() } catch (e: Exception) {
             registerFailed("cannot resolve server: ${e.message}")
             return
@@ -180,7 +190,12 @@ class SipUserAgent(
         sendRegister(config.registerExpiresSec, null)
     }
 
-    private fun sendRegister(expires: Int, auth: Pair<String, String>?, onDone: (() -> Unit)? = null) {
+    private fun sendRegister(
+        expires: Int,
+        auth: Pair<String, String>?,
+        generation: Long = regGeneration,
+        onDone: (() -> Unit)? = null,
+    ) {
         val req = newRequest(
             method = "REGISTER",
             uri = "sip:${account.domain}",
@@ -192,8 +207,9 @@ class SipUserAgent(
         req.headers.add("Contact", "<${contactUri()}>")
         req.headers.add("Expires", expires.toString())
         auth?.let { req.headers.add(it.first, it.second) }
+        val sentAtNanos = System.nanoTime()
         sendClient(req) { r ->
-            if (stopping && expires > 0) return@sendClient
+            if (generation != regGeneration || (stopping && expires > 0)) return@sendClient
             when {
                 r == null -> {
                     onDone?.invoke()
@@ -206,7 +222,7 @@ class SipUserAgent(
                         onDone?.invoke()
                         registerFailed("unsupported challenge")
                     } else {
-                        sendRegister(expires, authHeader, onDone)
+                        sendRegister(expires, authHeader, generation, onDone)
                     }
                 }
                 r.isSuccess -> {
@@ -214,10 +230,7 @@ class SipUserAgent(
                     regAuthAttempts = 0
                     if (expires == 0) return@sendClient
                     val granted = grantedExpires(r) ?: expires
-                    setStatus(true, "registered ($granted s)")
-                    log.info("registered as ${account.username}, expires=$granted")
-                    val refreshIn = maxOf(granted.toLong() * 1000 * 85 / 100, minOf(granted.toLong() * 1000 - 5000, 30_000))
-                    regRefresh = schedule(maxOf(refreshIn, 5_000)) { register() }
+                    registrationSucceeded(granted, sentAtNanos)
                 }
                 else -> {
                     onDone?.invoke()
@@ -225,6 +238,35 @@ class SipUserAgent(
                 }
             }
         }
+    }
+
+    private fun registrationSucceeded(granted: Int, sentAtNanos: Long) {
+        // Use a monotonic clock and count from transmission, conservatively including response delay.
+        val expiresAt = sentAtNanos + TimeUnit.SECONDS.toNanos(granted.toLong())
+        val remainingNanos = expiresAt - System.nanoTime()
+        if (granted <= 0 || remainingNanos <= 0) {
+            registerFailed("registration expired")
+            return
+        }
+        clearRegistrationExpiry()
+        regExpiresAtNanos = expiresAt
+        regExpiry = schedule(TimeUnit.NANOSECONDS.toMillis(remainingNanos) + 1) {
+            clearRegistrationExpiry()
+            setStatus(false, "registration expired")
+        }
+        setStatus(true, "registered ($granted s)")
+        log.info("registered as ${account.username}, expires=$granted")
+        val grantedMs = granted.toLong() * 1000
+        val refreshIn = maxOf(grantedMs * 85 / 100, minOf(grantedMs - 5000, 30_000))
+        val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - sentAtNanos)
+        // Even a short registrar grant must renew before expiry; a 5 s floor can exceed its lifetime.
+        regRefresh = schedule(maxOf(refreshIn - elapsedMs, 0)) { register() }
+    }
+
+    private fun clearRegistrationExpiry() {
+        regExpiry?.cancel(false)
+        regExpiry = null
+        regExpiresAtNanos = null
     }
 
     private fun grantedExpires(r: SipResponse): Int? {
@@ -237,6 +279,7 @@ class SipUserAgent(
     }
 
     private fun registerFailed(why: String) {
+        clearRegistrationExpiry()
         log.warn("registration failed: $why; retrying in 30 s")
         setStatus(false, "registration failed: $why")
         regRefresh = schedule(30_000) { register() }

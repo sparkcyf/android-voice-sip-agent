@@ -128,6 +128,8 @@ Module dependencies: `:voice-api` ← `:sip`, `:gateway` (pure JVM, testable on 
 - **SIP (`:sip`)**: UDP; all protocol state runs on a single `sip-ua` scheduler thread (`post {}`). Outbound calls
   carry the caller number in `P-Asserted-Identity`; for inbound calls the cellular number to dial comes from the
   `X-VSA-Dial` header, falling back to the Request-URI user part. PCMU/PCMA + telephone-event(101) only.
+  Registration renewal preserves readiness while the previous binding is unexpired; a separate monotonic
+  expiry timer, renewal failure or shutdown withdraws readiness. Superseded registration responses are ignored.
   `stop()` waits for best-effort unregister, then up to 1 s for queued socket closure. Its returned future
   reports local socket release, including cleanup that finishes after the bounded wait; repeated stops
   return the same completion. A PBX reply is not required to release the socket.

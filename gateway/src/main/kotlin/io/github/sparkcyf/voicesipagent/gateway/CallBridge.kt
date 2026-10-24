@@ -6,6 +6,7 @@ import io.github.sparkcyf.voicesipagent.voice.HangupCause
 import io.github.sparkcyf.voicesipagent.voice.LegState
 import io.github.sparkcyf.voicesipagent.voice.MediaPort
 import io.github.sparkcyf.voicesipagent.voice.redactNumber
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledThreadPoolExecutor
@@ -95,7 +96,8 @@ class CallBridge(
 
     /** Blocks until every task posted so far has run (tests). */
     internal fun drain() {
-        try { executor.submit {}.get() } catch (_: RejectedExecutionException) {}
+        // A submit racing executor termination is cancelled instead of rejected.
+        try { executor.submit {}.get() } catch (_: RejectedExecutionException) {} catch (_: CancellationException) {}
     }
 
     private fun post(block: () -> Unit): Boolean = try {

@@ -1,6 +1,6 @@
 # Android 12L audio attribution and call-access audit
 
-Audited `android12/{base,av,Telecomm}`, all at `android-12.1.0_r27`: Android 12L/API 32. The folder name does not make this an initial Android 12/API 31 audit. Framework audio construction, relevant native audio policy, and Telecom service admission were inspected. PermissionController qualification, vendor HAL implementations, and physical two-way audio were not verified for this tag. See the [Android 11 audit](ANDROID11_SOURCE_AUDIT.md) for the earlier baseline and the [implementation plan](ANDROID_COMPATIBILITY_PLAN.md#3-implement-the-older-cellular-audio-backend) for the release matrix.
+Audited `android12/{base,av,Telecomm}`, all at `android-12.1.0_r27`: Android 12L/API 32. The folder name does not make this a full initial Android 12/API 31 audit; initial-release coverage is limited to the patch history and phone-account permission follow-up below. Framework audio construction, relevant native audio policy, and Telecom service admission were inspected. PermissionController qualification, vendor HAL implementations, and physical two-way audio were not verified for this tag. See the [Android 11 audit](ANDROID11_SOURCE_AUDIT.md) for the earlier baseline and the [implementation plan](ANDROID_COMPATIBILITY_PLAN.md#3-implement-the-older-cellular-audio-backend) for the release matrix.
 
 ## Construction and attribution differences
 
@@ -41,6 +41,14 @@ The patch adds `InCallControllerTests.testBindToService_ThirdPartyApp()`. It def
 Implementation correction: `CallAccessRequirements` accepts the enabled non-UI service and allowed `MANAGE_ONGOING_CALLS` on API 31+ without requiring a companion override or a dialer role. The subsequent [Android 13 and current Android 17 checks](ANDROID13_SOURCE_AUDIT.md#current-framework-follow-up-android-17) confirm this admission path on those releases. Calling permissions remain required. The override health flag remains diagnostic, and setup still attempts the existing override operation; its absence no longer blocks readiness. API 30 keeps its default-dialer requirement. Regression coverage includes API 31–37 with no override or role, plus loss of AppOp, service availability, or calling permissions.
 
 Validation (2026-10-12): `:privileged:testDebugUnitTest` passed all 23 app-side tests, including the new readiness regression. The upstream Telecom/CTS tests and physical-device binding/audio were not run in this check.
+
+## Phone-account lookup permission
+
+Source follow-up (2026-10-25): initial Android 12 already protects [`TelecomManager.getPhoneAccount()`](https://android.googlesource.com/platform/packages/services/Telecomm/+/android-12.0.0_r1/src/com/android/server/telecom/TelecomServiceImpl.java#320), including queries used only to inspect account capabilities. Compatibility change `183407956` [enables the check for apps targeting API 31+](https://android.googlesource.com/platform/frameworks/base/+/android-12.0.0_r1/telecomm/java/android/telecom/TelecomManager.java#1021). Targeted checks of [Android 13](https://android.googlesource.com/platform/packages/services/Telecomm/+/android-13.0.0_r1/src/com/android/server/telecom/TelecomServiceImpl.java#357), [Android 16](https://android.googlesource.com/platform/packages/services/Telecomm/+/android-16.0.0_r1/src/com/android/server/telecom/TelecomServiceImpl.java#645), and [Android 17](https://android.googlesource.com/platform/packages/services/Telecomm/+/android-17.0.0_r1/src/com/android/server/telecom/TelecomServiceImpl.java#695) confirm the same gate. These checks do not constitute full audits of those releases.
+
+[`canGetPhoneAccount()`](https://android.googlesource.com/platform/packages/services/Telecomm/+/android-12.0.0_r1/src/com/android/server/telecom/TelecomServiceImpl.java#2437) accepts the default/system dialer or relevant SIM call manager, otherwise requiring `READ_PRIVILEGED_PHONE_STATE` or `READ_PHONE_NUMBERS`. The calling method separately exempts shell; Android 17 also bypasses this gate for callers holding its privileged Telecom UI permission. Non-UI InCallService admission, `MANAGE_ONGOING_CALLS`, and `READ_PHONE_STATE` do not exempt an ordinary companion app from the lookup permission check.
+
+The gateway's `CellularEndpoint.isCellular()` performs this lookup under the app UID to check `PhoneAccount.CAPABILITY_SIM_SUBSCRIPTION`. Shizuku's helper permissions do not cover that call. Keep `READ_PHONE_NUMBERS` in setup's phone-permission grants while takeover is enabled.
 
 ## Muting and route failures
 

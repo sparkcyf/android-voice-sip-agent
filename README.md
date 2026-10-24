@@ -13,7 +13,7 @@ Turn an **unrooted** Android 11+ phone into a single-line **cellular ↔ SIP gat
 
 Privileged operations (call-audio interception, the Telecom companion override, appops) are performed through
 [Shizuku](https://shizuku.rikka.app/) running as the shell user (uid 2000) — **no root required**. This relies on
-hidden platform APIs, which is also why the app is distributed through GitHub Releases rather than Google Play.
+hidden platform APIs, which is why the app won't be available on Google Play.
 
 > [!WARNING]
 > This is a hobby project built on undocumented Android behaviour. It may stop working with any OS update, may
@@ -51,8 +51,8 @@ data only.
 The default pjsua2 SIP stack supports Opus with G.711 fallback. See [audio formats and routing](TECHNICAL.md#audio-formats-and-routing)
 for codec settings and further validation gaps.
 
-Limitations: one call at a time. The APK packages arm64-v8a and targets Android 11+ (minSdk 30).
-Android 11 remains untested. Hidden APIs and modem routing differ across vendors, so other devices
+Limitations: one call at a time. Early media (ringback tone, busy signal, etc.) is unimplemented. The APK packages arm64-v8a and targets Android 11+ (minSdk 30).
+Android 11 remains untested. Hidden APIs and audio HAL routing differ across vendors, so other devices
 may need different audio settings or may not work at all.
 Default-dialer mode provides gateway status and recovery, with a switch-dialer action for manual calling.
 Emergency numbers are always refused and are never dialed through the gateway.
@@ -81,7 +81,7 @@ Emergency numbers are always refused and are never dialed through the gateway.
 
 See [Advanced settings](#advanced-settings) for call-access modes, audio choices, and dialer recovery.
 
-For local listening, turn **Mute call audio on this phone** off in **Advanced settings** before the call.
+For local listening, turn **Mute call audio on this phone** off in **Takeover** before the call.
 Downlink output follows the phone's current call audio route (earpiece, speaker, or headset) and volume.
 The handset microphone stays muted while bridging, so local listening does not enable local speech.
 
@@ -172,7 +172,7 @@ Phone numbers are logged with only their last two digits; call audio is never lo
 - **Vendor setup:** Xiaomi, POCO and Redmi need a signed-in Mi account before USB installation and USB debugging
   (security settings) can be enabled, and HyperOS may refuse `pm grant`. Infinix and Redmi may block
   `adb install`; copy the APK to the phone and install it from the file manager. On Samsung, turn off
-  **Auto Blocker**. Turn off automatic system updates: an OS update can break the hidden APIs the gateway uses.
+  **Auto Blocker**. Watch for compatibility changes with major Android version upgrades.
 
 ## Call routing
 
@@ -301,7 +301,8 @@ Copyright (C) 2026 sparkcyf
 
 This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation; either version 2 of the License, or (at your option) any later version. See [LICENSE](LICENSE). As a special exception, linking with any library licensed under the Apache License, Version 2.0 is permitted, provided all other code complies with the GPL.
 
-Release APKs statically link pjsip (GPL-2.0-or-later), OpenSSL (Apache-2.0) and libopus (BSD-3-Clause); see
+Release APKs statically link pjsip (GPL-2.0-or-later), OpenSSL (Apache-2.0) and libopus (BSD-3-Clause),
+and bundle Apache 2.0-licensed Java/Kotlin components (AndroidX/Jetpack, Kotlin, kotlinx.coroutines, and Shizuku API/provider); see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The corresponding source for every release is the tagged commit
 of this repository plus the pinned upstream tarballs fetched by `sip-pjsua2/native/build-pjsua2.sh`.
 

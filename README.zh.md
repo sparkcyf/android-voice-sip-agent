@@ -11,8 +11,7 @@
 - 通话音频通过直接电话路由或 Android 的通话重定向 API 截取和注入。桥接期间可静音本机通话输出，本机麦克风始终保持静音。
 
 特权操作（通话音频拦截、Telecom 伴侣覆盖、appops）通过以 shell 用户（uid 2000）运行的
-[Shizuku](https://shizuku.rikka.app/) 完成，**不需要 root**。项目依赖隐藏的系统 API，这也是它只在 GitHub Releases
-发布、不上 Google Play 的原因。
+[Shizuku](https://shizuku.rikka.app/) 完成，**不需要 root**。项目依赖隐藏的系统 API，因此不会在 Google Play 上架。
 
 > [!WARNING]
 > 这是一个基于未公开 Android 行为的个人项目，任何一次系统更新都可能让它失效，也可能掉话或把呼叫送错地方。
@@ -46,8 +45,8 @@
 默认 pjsua2 栈支持 Opus，并保留 G.711 作为回退。
 编解码设置和其他验证事项见英文[音频格式与路由说明](TECHNICAL.md#audio-formats-and-routing)。
 
-限制：同一时间只有一路通话；APK 包含 arm64-v8a；最低为 Android 11（minSdk 30）。
-Android 11 尚未测试。各厂商的隐藏 API 和音频路由不同，其他机型可能需要不同的音频设置，也可能完全无法使用。
+限制：同一时间只有一路通话；尚未实现早期媒体（early media，即回铃音、忙音等）；APK 包含 arm64-v8a；最低为 Android 11（minSdk 30）。
+Android 11 尚未测试。各厂商的隐藏 API 和音频 HAL 路由不同，其他机型可能需要不同的音频设置，也可能完全无法使用。
 默认拨号器模式提供网关状态和恢复界面，可通过切换拨号器恢复手动通话。紧急号码一律拒绝，绝不会经网关拨出。
 
 ## 安装
@@ -157,7 +156,7 @@ adb logcat -s VoiceSipAgent VsaPrivileged VsaTap
   并默认保持未注册。adb 方式：`adb shell monkey -p io.github.sparkcyf.voicesipagent -c android.intent.category.LAUNCHER 1`。
 - **厂商设置**：小米、POCO、Redmi 需要登录小米账号才能开启 USB 安装和 USB 调试（安全设置），HyperOS 还可能拒绝
   `pm grant`。Infinix 和 Redmi 可能禁止 `adb install`，可把 APK 拷到手机上用文件管理器安装。三星需关闭
-  **Auto Blocker**。请关闭系统自动更新：系统更新可能破坏网关依赖的隐藏 API。
+  **Auto Blocker**。请留意 Android 大版本升级可能带来的兼容性变化。
 
 ## 呼叫路由
 
@@ -277,7 +276,7 @@ Copyright (C) 2026 sparkcyf
 
 本程序是自由软件：你可以依据自由软件基金会发布的 GNU 通用公共许可证第 2 版或（由你选择）任何更新的版本，再分发和/或修改它。详见 [LICENSE](LICENSE)（以英文原文为准）。例外：允许将本程序与任何依据 Apache License 2.0 许可的库链接，前提是其余所有代码均遵守 GPL。
 
-Release APK 静态链接了 pjsip（GPL-2.0-or-later）、OpenSSL（Apache-2.0）和 libopus（BSD-3-Clause），见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+Release APK 静态链接了 pjsip（GPL-2.0-or-later）、OpenSSL（Apache-2.0）和 libopus（BSD-3-Clause），并打包了采用 Apache 2.0 许可证的 Java/Kotlin 组件（AndroidX/Jetpack、Kotlin、kotlinx.coroutines 和 Shizuku API/provider），见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 每个 release 对应的源码是本仓库对应 tag 的提交，加上 `sip-pjsua2/native/build-pjsua2.sh` 下载的版本固定的上游源码包。
 
 ## 免责声明

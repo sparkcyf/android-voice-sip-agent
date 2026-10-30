@@ -157,6 +157,9 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
             Check("Doze allowlisted", p?.get(HealthKeys.DOZE_ALLOWLISTED) == true)
             Check("SIP registration", h.sip.ready,
                 if (h.takeover) h.sip.detail else "Stopped while takeover is off")
+            Text("SIM slots: " + h.sims.joinToString { "${it.slot} ${it.carrier}" }.ifEmpty { "none" } +
+                "; default for calls: ${h.defaultSimSlot ?: "ask every time"}", style = MaterialTheme.typography.bodySmall)
+            h.simWarning?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -297,7 +300,7 @@ private fun SettingsSection(rt: GatewayRuntime, editor: SipSettingsDraft) = with
     val sipPending = pending?.hasSameSipSettings(cur) == false
     val portValidationError = portError
     Section("Settings") {
-        Choice("SIP stack", SipStack.entries, stack, { it.id }) {
+        Choice("SIP stack", SipStack.entries, stack, { if (it == SipStack.BUILTIN) "${it.id} (deprecated)" else it.id }) {
             stack = it
             // The built-in stack is UDP only.
             if (it == SipStack.BUILTIN) {

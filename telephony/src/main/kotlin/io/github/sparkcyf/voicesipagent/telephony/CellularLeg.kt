@@ -24,9 +24,10 @@ class CellularLeg internal constructor(
     direction: LegDirection,
     remote: Party,
     target: String?,
+    line: Int?,
     private val endpoint: CellularEndpoint,
     private val main: Handler,
-) : AbstractCallLeg(id, "cellular", direction, remote, target) {
+) : AbstractCallLeg(id, "cellular", direction, remote, target, line) {
     @Volatile internal var call: Call? = null
         private set
     @Volatile private var hangupRequested: HangupCause? = null

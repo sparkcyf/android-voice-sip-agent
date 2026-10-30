@@ -31,6 +31,15 @@ class InviteTest {
     }
 
     @Test
+    fun simSlotHeader() {
+        assertNull(Invite.line(invite("x", "From: <sip:302@pbx>;tag=1")))
+        assertEquals(1, Invite.line(invite("x", "x-vsa-simslot: 1")))
+        assertEquals(0, Invite.line(invite("x", "X-VSA-SIMSLOT:0")))
+        assertEquals(Invite.INVALID_LINE, Invite.line(invite("x", "X-VSA-SIMSLOT: sim2")))
+        assertEquals(Invite.INVALID_LINE, Invite.line(invite("x", "X-VSA-SIMSLOT: -1")))
+    }
+
+    @Test
     fun headersStopAtBody() {
         val msg = invite("5551234567") + "\r\nX-VSA-Dial: 999"
         assertEquals("5551234567", Invite.target(msg))

@@ -24,9 +24,10 @@ internal class SipCall(
     direction: LegDirection,
     remote: Party,
     target: String?,
+    line: Int?,
     val callId: String,
     val localTag: String,
-) : AbstractCallLeg(callId.take(8), "sip", direction, remote, target) {
+) : AbstractCallLeg(callId.take(8), "sip", direction, remote, target, line) {
     private val log = ua.logger
     private val config = ua.sipConfig
 
@@ -113,6 +114,7 @@ internal class SipCall(
         req.headers.add("Contact", "<${ua.contactUri()}>")
         ua.addCapabilities(req)
         callerForRetry?.number?.let { req.headers.add("P-Asserted-Identity", "<sip:$it@${config.account.domain}>") }
+        line?.let { req.headers.add(SipUserAgent.LINE_HEADER, it.toString()) }
         auth?.let { req.headers.add(it.first, it.second) }
         req.headers.add("Content-Type", "application/sdp")
         req.body = localSdp(config.codecs.map { it.payloadType to it }, Sdp.DEFAULT_TE_PT, "sendrecv").toByteArray()

@@ -24,8 +24,9 @@ interface CallEndpoint {
     fun removeStatusListener(listener: EndpointStatusListener)
 
     /**
-     * Starts an outbound call to [target]. Never throws for call failures: a leg that cannot be
-     * placed is returned already [LegState.ENDED] (and its listeners still fire).
+     * Starts an outbound call to [target] on [line] (see [CallLeg.line]; null = the endpoint's
+     * default). Never throws for call failures: a leg that cannot be placed is returned already
+     * [LegState.ENDED] (and its listeners still fire).
      */
-    fun dial(target: String, caller: Party): CallLeg
+    fun dial(target: String, caller: Party, line: Int? = null): CallLeg
 }

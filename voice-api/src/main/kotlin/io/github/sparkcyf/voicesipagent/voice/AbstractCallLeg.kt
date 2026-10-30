@@ -9,6 +9,7 @@ abstract class AbstractCallLeg(
     final override val direction: LegDirection,
     final override val remote: Party,
     final override val target: String?,
+    final override val line: Int? = null,
 ) : CallLeg {
     private val listeners = CopyOnWriteArrayList<CallLeg.Listener>()
 

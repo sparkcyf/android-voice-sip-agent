@@ -28,8 +28,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * A single-account SIP endpoint backed by pjsua2, exposed as a [CallEndpoint]. Drop-in replacement
- * for the built-in stack: same trunk semantics (Request-URI user = number to dial, PAI = caller).
+ * A single-account SIP endpoint backed by pjsua2, exposed as a [CallEndpoint]. Trunk semantics:
+ * Request-URI user or X-VSA-Dial = number to dial, PAI = caller, X-VSA-SIMSLOT = [CallLeg.line].
  */
 class PjsipEndpoint(
     val config: PjsipConfig,
@@ -230,8 +230,8 @@ class PjsipEndpoint(
         statusListeners.remove(listener)
     }
 
-    override fun dial(target: String, caller: Party): CallLeg {
-        val leg = PjsipCall(this, LegDirection.OUTBOUND, Party(target), target, "p${ids.getAndIncrement()}")
+    override fun dial(target: String, caller: Party, line: Int?): CallLeg {
+        val leg = PjsipCall(this, LegDirection.OUTBOUND, Party(target), target, line, "p${ids.getAndIncrement()}")
         if (stopped || !PjsuaLib.running) {
             leg.doHangup(HangupCause.INTERNAL_ERROR)
             return leg
@@ -277,17 +277,21 @@ class PjsipEndpoint(
         val msg = rdata.wholeMsg
         val target = Invite.target(msg)
         val caller = Invite.caller(msg)
-        val leg = PjsipCall(this, LegDirection.INBOUND, caller, target, "p${ids.getAndIncrement()}")
+        val line = Invite.line(msg)
+        val leg = PjsipCall(this, LegDirection.INBOUND, caller, target, line, "p${ids.getAndIncrement()}")
         val call = leg.GwCall(acc, prm.callId)
-        log.info("incoming INVITE to ${redactNumber(target)} from ${redactNumber(caller.number)}")
+        log.info("incoming INVITE to ${redactNumber(target)} from ${redactNumber(caller.number)}" +
+            (line?.let { " slot $it" } ?: ""))
         val handler = incomingHandler
         val refuse = when {
             config.acceptOnlyFromServer && !fromServer(src) -> 403
+            line == Invite.INVALID_LINE -> 400
             handler == null || stopped || workerFailed.get() -> 480
             else -> 0
         }
         if (refuse != 0) {
             if (refuse == 403) log.warn("rejecting INVITE from unexpected source")
+            if (refuse == 400) log.warn("rejecting INVITE with invalid ${Invite.LINE_HEADER}")
             val op = CallOpParam()
             op.statusCode = refuse
             runCatching { call.hangup(op) }
@@ -346,6 +350,17 @@ internal object Invite {
 
     /** Header carrying the number to dial when the Request-URI user must stay the gateway's own AoR. */
     const val DIAL_HEADER = "X-VSA-Dial"
+
+    /** Logical SIM slot (0-based, as Android numbers them) of the cellular call, both directions. */
+    const val LINE_HEADER = "X-VSA-SIMSLOT"
+
+    /** [line] result for a present header that is not a slot index. */
+    const val INVALID_LINE = -1
+
+    /** [LINE_HEADER] as a slot index; null if absent, [INVALID_LINE] if malformed. */
+    fun line(msg: String): Int? = header(msg, LINE_HEADER, null)?.let { v ->
+        v.toIntOrNull()?.takeIf { it >= 0 } ?: INVALID_LINE
+    }
 
     /**
      * The number the PBX wants us to dial: [DIAL_HEADER] if present (needed behind registrar-based

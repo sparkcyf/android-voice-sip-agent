@@ -77,7 +77,7 @@ Android 11 尚未测试。各厂商的隐藏 API 和音频 HAL 路由不同，�
 
 | 设置项 | 含义 |
 |---|---|
-| SIP stack | `pjsua2`（默认；UDP/TCP/TLS、SRTP）或 `builtin`（纯 Kotlin，仅 UDP） |
+| SIP stack | `pjsua2`（默认；UDP/TCP/TLS、SRTP）或 `builtin`（纯 Kotlin，仅 UDP；已弃用，新功能只做 pjsua2） |
 | PBX host / port | 注册服务器 / 代理地址 |
 | Transport | `udp`（局域网）、`tcp` 或 `tls`（仅 pjsua2） |
 | SRTP | `off`、`optional`（提供 SDES，对端不支持时退回 RTP）或 `mandatory`（不支持则 488）；仅在 TLS 下生效 |
@@ -148,6 +148,10 @@ adb logcat -s VoiceSipAgent VsaPrivileged VsaTap
 - **对方听不到你，或者你只听到静音**：把 **Cellular audio** 设为 *Direct telephony*，并关闭
   **Mute call audio on this phone**（adb 下为 `--ei audio_method 2` 和 `earpiece-mute --ez on false`）。
   在上表的社区测试设备上，只有这个组合能双向通话。
+- **某张卡的来电接通几秒后被挂断，日志出现 `not in a cellular call: audio mode=3`**：这张卡的通话被运营商 App 当作 VoIP
+  处理（例如 Pixel 上开启 Wi-Fi 通话的 Google Fi），通话音频不经过基带。请关闭这张卡的 Wi-Fi 通话。
+- **双卡手机上不带 `X-VSA-SIMSLOT` 的 PBX 去电被拒绝**：Android 没有设置默认通话卡（"每次询问"）。请在 SIM 卡设置里选一张，
+  或者由 PBX 发送该头（见[双卡](#双卡)）。
 - **MediaTek / 传音（如 Infinix）手机上的 Shizuku 13.6.0**：App 的特权服务始终无法启动
   （`LoadedApk.makeApplicationInner` 中的 `NullPointerException`；
   [RikkaApps/Shizuku#1198](https://github.com/RikkaApps/Shizuku/issues/1198)）。请改装 Shizuku 13.5.4。
@@ -168,6 +172,19 @@ adb logcat -s VoiceSipAgent VsaPrivileged VsaTap
   `PJSIP/$OUTNUM$@<trunk>` 即可）。蜂窝通话接通后才向 PBX 回 200 OK。
   - 中间隔着按注册表路由的代理（Flexisip 等）时，Request-URI 的用户部分必须保持为网关自己的 AoR，否则代理会按号码查注册表并返回
     404，所以号码要放进 `X-VSA-Dial`（见下方拨号方案）。
+
+### 双卡
+
+所有 SIM 卡共用一个 trunk，用 `X-VSA-SIMSLOT` 头按 Android 的**逻辑卡槽号**指定卡（0、1……，即
+`SubscriptionInfo.getSimSlotIndex()`；同一块 eSIM 芯片上同时启用的两个配置算两个卡槽）。
+`adb … --es op status` 会列出 `sims=0:<运营商>(sub<id>),1:…`。
+
+- **蜂窝来电**：INVITE 带有 `X-VSA-SIMSLOT`，值为来电所在的卡槽；需要按卡区分去向时，可在拨号方案中用
+  `${PJSIP_HEADER(read,X-VSA-SIMSLOT)}` 读取。
+- **SIP 去电**：用 `X-VSA-SIMSLOT` 选卡。不带该头时使用 Android 的默认通话卡；没有默认卡（"每次询问"）时拒绝呼叫，
+  App 里会显示警告。卡槽里没有启用的卡，或 Telecom 把电话放到了别的卡上，回 `480`；值格式错误回 `400`。
+  网关呼叫永远不会弹出 Android 的选卡框。
+- 无论用哪张卡，同一时间只桥接一路通话。
 
 ### PBX 配置示例（FreePBX / IssabelPBX + chan_pjsip）
 
@@ -214,13 +231,25 @@ exten => _X.,n,Hangup(${HANGUPCAUSE})
 
 [vsa-android-gw-hdr]
 exten => s,1,Set(PJSIP_HEADER(add,X-VSA-Dial)=${ARG1})
+exten => s,n,ExecIf($["${ARG2}" != ""]?Set(PJSIP_HEADER(add,X-VSA-SIMSLOT)=${ARG2}))
 exten => s,n,Return()
+
+; 双卡：每个卡槽一个上下文（见上文"双卡"）
+[vsa-android-gw-out-sim0]
+exten => _X.,1,Dial(PJSIP/android-gw,,b(vsa-android-gw-hdr^s^1(${EXTEN},0)))
+exten => _X.,n,Hangup(${HANGUPCAUSE})
+
+[vsa-android-gw-out-sim1]
+exten => _X.,1,Dial(PJSIP/android-gw,,b(vsa-android-gw-hdr^s^1(${EXTEN},1)))
+exten => _X.,n,Hangup(${HANGUPCAUSE})
 ```
 
 Web 后台：
 
 - **Trunk**：Custom，拨号串 `Local/$OUTNUM$@vsa-android-gw-out`（局域网直连、没有代理时也可以直接用 `PJSIP/$OUTNUM$@android-gw`）。
 - **Outbound Route**：专用前缀（如 `9#7#`），匹配 `X.`，走上述 trunk；必须排在 `9.` 之类更宽的路由之前。
+- **双卡**：每个卡槽一个 custom trunk（`Local/$OUTNUM$@vsa-android-gw-out-sim0`、`…-sim1`），每个 trunk 一个路由前缀，
+  例如 `9#7#` → 卡槽 0，`9#6#` → 卡槽 1。
 - **Inbound Route**：DID `android-gw` → 任意目标。
 
 ### 公网接入：Flexisip

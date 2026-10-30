@@ -24,6 +24,8 @@ import java.util.concurrent.TimeoutException
 /**
  * A single-account SIP user agent over UDP, exposed to the rest of the app as a [CallEndpoint].
  * All protocol state lives on one scheduler thread; public methods post onto it.
+ *
+ * Deprecated: new features target the pjsua2 stack. This one only keeps trunk compatibility.
  */
 class SipUserAgent(
     val config: SipConfig,
@@ -166,8 +168,8 @@ class SipUserAgent(
         statusListeners.remove(listener)
     }
 
-    override fun dial(target: String, caller: Party): CallLeg {
-        val call = SipCall(this, LegDirection.OUTBOUND, Party(target), target, newCallId(), newTag())
+    override fun dial(target: String, caller: Party, line: Int?): CallLeg {
+        val call = SipCall(this, LegDirection.OUTBOUND, Party(target), target, line, newCallId(), newTag())
         post { call.startOutbound(target, caller) }
         return call
     }
@@ -378,8 +380,15 @@ class SipUserAgent(
             number = pai?.sipUri?.user ?: fromAddr.sipUri?.user,
             displayName = pai?.displayName ?: fromAddr.displayName,
         )
-        val call = SipCall(this, LegDirection.INBOUND, caller, target, req.callId!!, newTag())
+        val lineHeader = req.headers[LINE_HEADER]?.trim()
+        val line = lineHeader?.toIntOrNull()?.takeIf { it >= 0 }
+        val call = SipCall(this, LegDirection.INBOUND, caller, target, line, req.callId!!, newTag())
         log.info("incoming INVITE to ${redactNumber(target)} from ${redactNumber(caller.number)}")
+        if (lineHeader != null && line == null) {
+            log.warn("rejecting INVITE with invalid $LINE_HEADER")
+            tx.respond(buildResponse(req, 400, toTag = call.localTag))
+            return
+        }
         if (handler == null || stopping) {
             tx.respond(buildResponse(req, 480, toTag = call.localTag))
             return
@@ -513,5 +522,8 @@ class SipUserAgent(
 
     companion object {
         const val ALLOW = "INVITE, ACK, CANCEL, BYE, OPTIONS, INFO, NOTIFY, UPDATE"
+
+        /** Logical SIM slot of the cellular call; same header as the pjsua2 stack. */
+        const val LINE_HEADER = "X-VSA-SIMSLOT"
     }
 }

@@ -16,7 +16,10 @@ Verified on a Pixel 11 Pro (Android 17) and a Motorola phone (Android 16): cellu
 via the phone, two-way audio, DTMF, Wi-Fi reconnect (also mid-call), handset muting while bridged, the takeover
 switch, overnight Doze standby, 15-minute calls without clock drift, and pjsua2 calls both on a LAN (UDP) and
 through a public Flexisip proxy (TLS + SRTP). Not yet verified: call waiting, DTMF and network-loss recovery under
-pjsua2, public calls over cellular data only (Wi-Fi off).
+pjsua2, public calls over cellular data only (Wi-Fi off). Dual SIM: on the Pixel (two MEP eSIM profiles) inbound calls on
+both logical slots and outbound calls selected by `X-VSA-SIMSLOT` (and by the default SIM without it) bridge with
+two-way audio; concurrent calls on both SIMs are unverified.
+A SIM whose calls a carrier app handles as VoIP (Google Fi with Wi-Fi calling) cannot be tapped (audio mode 3).
 Community reports (README "Tested on") cover five more Android 13–16 phones, which give two-way audio only with
 `audio_method=2` (direct) and earpiece mute off; Shizuku 13.6.0 cannot start the UserService on MediaTek/Transsion (use 13.5.4).
 
@@ -100,6 +103,11 @@ Module dependencies: `:voice-api` ← `:sip`, `:gateway` (pure JVM, testable on 
   last 8 digits). Calls the user dials manually and calls arriving while another call exists are left alone;
   emergency numbers are refused fail-closed. Once a call is ACTIVE it is `setMuted(true)` and the audio tap is
   opened (up to 5 retries).
+  **Dual SIM**: `CallLeg.line` carries the logical SIM slot (`SimSlots`: SubscriptionInfo slot index ↔ Telecom
+  SIM PhoneAccount). Outbound calls always pass `EXTRA_PHONE_ACCOUNT_HANDLE`: the requested slot, else the system
+  default calling SIM; with neither, or a missing slot, placement fails `UNAVAILABLE`. A placed call that Telecom
+  reports on another slot is hung up. Both SIP stacks map `X-VSA-SIMSLOT` (0-based) to/from `line`; a malformed
+  value gets 400.
 - **Privileged process (`:privileged`)**: a Shizuku UserService running in an app_process with shell uid 2000,
   AIDL interface `IPrivilegedService`. Call audio is handed to the app over a **SOCK_SEQPACKET socketpair**
   (one packet = one frame); the app side is `PcmSocketPort` (the clock source). The UserService `version` is the
@@ -125,7 +133,8 @@ Module dependencies: `:voice-api` ← `:sip`, `:gateway` (pure JVM, testable on 
   tap stats add totals (`GapStats`); pjsua2 logs `call N rtp rx[...] tx[...] jbuf[...] fromSip/toSip[...]`
   every 5 s and a final line when the stream is still available. Counters only, never audio.
   The new 16 kHz tap has not yet been verified on a device.
-- **SIP (`:sip`)**: UDP; all protocol state runs on a single `sip-ua` scheduler thread (`post {}`). Outbound calls
+- **SIP (`:sip`)**: **deprecated**; new features target `:sip-pjsua2`, this stack only keeps trunk compatibility
+  (including `X-VSA-SIMSLOT`). UDP; all protocol state runs on a single `sip-ua` scheduler thread (`post {}`). Outbound calls
   carry the caller number in `P-Asserted-Identity`; for inbound calls the cellular number to dial comes from the
   `X-VSA-Dial` header, falling back to the Request-URI user part. PCMU/PCMA + telephone-event(101) only.
   Registration renewal preserves readiness while the previous binding is unexpired; a separate monotonic
@@ -301,6 +310,7 @@ Module dependencies: `:voice-api` ← `:sip`, `:gateway` (pure JVM, testable on 
 
 ## PBX integration
 
+- One trunk serves every SIM: `X-VSA-SIMSLOT` selects (outbound) or reports (inbound) the logical slot.
 - The gateway is a **trunk**, not an extension (`context=from-trunk`, `trust_id_inbound=yes`,
   `remove_existing=yes`, ulaw/alaw only). See README for the reference `pjsip_custom_post.conf` /
   `extensions_custom.conf`.

@@ -52,6 +52,7 @@ fun interface BridgeListener {
  *  - Media is cross-connected once both legs expose a port.
  *  - Either side ending ends the other; failures before answer propagate their cause.
  *  - DTMF from one leg is replayed on the other.
+ *  - A's [CallLeg.line] is passed to B (e.g. SIM slot <-> X-VSA-SIMSLOT).
  */
 class CallBridge(
     private val sideA: CallEndpoint,
@@ -145,8 +146,9 @@ class CallBridge(
         val s = BridgeSession(nextId++, from.name, leg)
         session = s
         leg.addListener(LegWatcher(s, inbound = true))
-        log("$s: ${from.name} ${redactNumber(leg.remote.number)} -> ${to.name} ${redactNumber(target)}")
-        val out = to.dial(target, leg.remote)
+        log("$s: ${from.name} ${redactNumber(leg.remote.number)} -> ${to.name} ${redactNumber(target)}" +
+            (leg.line?.let { " line $it" } ?: ""))
+        val out = to.dial(target, leg.remote, leg.line)
         s.outbound = out
         out.addListener(LegWatcher(s, inbound = false))
         s.answerTimer = executor.schedule({

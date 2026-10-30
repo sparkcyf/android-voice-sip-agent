@@ -39,7 +39,7 @@ class EchoEndpoint(
     override fun removeStatusListener(listener: EndpointStatusListener) {}
 
     @Synchronized
-    override fun dial(target: String, caller: Party): CallLeg {
+    override fun dial(target: String, caller: Party, line: Int?): CallLeg {
         val leg = EchoLeg("e${ids.getAndIncrement()}", target, echoDelayMs / VoiceFormat.FRAME_MS, format)
         if (closed) { leg.hangup(HangupCause.UNAVAILABLE); return leg }
         leg.proceed()

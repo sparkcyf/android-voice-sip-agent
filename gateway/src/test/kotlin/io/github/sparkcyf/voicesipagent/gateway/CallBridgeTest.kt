@@ -63,6 +63,26 @@ class CallBridgeTest {
     }
 
     @Test
+    fun lineIsPassedToTheOtherSide() {
+        cell.incoming("13800001234", line = 1)
+        settle()
+        assertEquals(1, sip.dialed.single().line)
+        bridge.stop()
+
+        build()
+        sip.incoming("302", target = "13800001234")
+        settle()
+        assertNull("no line requested -> endpoint default", cell.dialed.single().line)
+    }
+
+    @Test
+    fun sipLineSelectsCellularLine() {
+        sip.incoming("302", target = "13800001234", line = 0)
+        settle()
+        assertEquals(0, cell.dialed.single().line)
+    }
+
+    @Test
     fun sipFailureRejectsCellular() {
         val a = cell.incoming("13800001234")
         settle()

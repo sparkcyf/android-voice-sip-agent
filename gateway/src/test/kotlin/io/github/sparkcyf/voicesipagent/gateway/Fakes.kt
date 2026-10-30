@@ -27,8 +27,8 @@ class FakePort(
     override fun writeFrame(frame: ShortArray) { written += frame }
 }
 
-class FakeLeg(kind: String, dir: LegDirection, remote: Party, target: String?) :
-    AbstractCallLeg("$kind-${target ?: remote.number}", kind, dir, remote, target) {
+class FakeLeg(kind: String, dir: LegDirection, remote: Party, target: String?, line: Int? = null) :
+    AbstractCallLeg("$kind-${target ?: remote.number}", kind, dir, remote, target, line) {
     val actions = CopyOnWriteArrayList<String>()
     val dtmf = CopyOnWriteArrayList<Char>()
     var autoConfirmAnswer = true
@@ -55,15 +55,15 @@ class FakeEndpoint(override val name: String) : CallEndpoint {
     override fun setIncomingCallHandler(handler: IncomingCallHandler?) { this.handler = handler }
     override fun addStatusListener(listener: EndpointStatusListener) {}
     override fun removeStatusListener(listener: EndpointStatusListener) {}
-    override fun dial(target: String, caller: Party): CallLeg {
-        val leg = FakeLeg(name, LegDirection.OUTBOUND, Party(target), target)
+    override fun dial(target: String, caller: Party, line: Int?): CallLeg {
+        val leg = FakeLeg(name, LegDirection.OUTBOUND, Party(target), target, line)
         dialed += leg
         onDial(leg)
         return leg
     }
 
-    fun incoming(number: String, target: String? = null): FakeLeg {
-        val leg = FakeLeg(name, LegDirection.INBOUND, Party(number), target)
+    fun incoming(number: String, target: String? = null, line: Int? = null): FakeLeg {
+        val leg = FakeLeg(name, LegDirection.INBOUND, Party(number), target, line)
         leg.remoteProceeding()
         handler!!.onIncomingCall(leg)
         return leg

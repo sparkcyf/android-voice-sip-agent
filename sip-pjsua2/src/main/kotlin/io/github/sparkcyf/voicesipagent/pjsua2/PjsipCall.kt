@@ -31,8 +31,9 @@ internal class PjsipCall(
     direction: LegDirection,
     remote: Party,
     target: String?,
+    line: Int?,
     id: String,
-) : AbstractCallLeg(id, "sip", direction, remote, target) {
+) : AbstractCallLeg(id, "sip", direction, remote, target, line) {
     private val log get() = owner.log
 
     // pjsua thread only
@@ -57,6 +58,9 @@ internal class PjsipCall(
         if (display != null) prm.txOption.localUri = "\"$display\" <${owner.aor}>"
         caller.number?.let { n ->
             prm.txOption.headers.add(SipHeader().apply { hName = "P-Asserted-Identity"; hValue = "<${owner.uriFor(n)}>" })
+        }
+        line?.let { slot ->
+            prm.txOption.headers.add(SipHeader().apply { hName = Invite.LINE_HEADER; hValue = slot.toString() })
         }
         try {
             c.makeCall(owner.uriFor(target), prm)

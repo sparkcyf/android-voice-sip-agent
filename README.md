@@ -89,7 +89,7 @@ The handset microphone stays muted while bridging, so local listening does not e
 
 | Setting | Meaning |
 |---|---|
-| SIP stack | `pjsua2` (default; UDP/TCP/TLS, SRTP) or `builtin` (pure Kotlin, UDP only) |
+| SIP stack | `pjsua2` (default; UDP/TCP/TLS, SRTP) or `builtin` (pure Kotlin, UDP only; deprecated, new features target pjsua2) |
 | PBX host / port | Registrar / proxy address |
 | Transport | `udp` (LAN), `tcp` or `tls` (pjsua2 only) |
 | SRTP | `off`, `optional` (offer SDES, fall back to RTP) or `mandatory` (488 otherwise); only effective with TLS |
@@ -162,6 +162,11 @@ Phone numbers are logged with only their last two digits; call audio is never lo
 - **The far end cannot hear you, or you hear silence:** set **Cellular audio** to *Direct telephony* and turn
   **Mute call audio on this phone** off (`--ei audio_method 2` and `earpiece-mute --ez on false` over adb). This was the
   only combination that gave two-way audio on the community-tested devices above.
+- **Calls on one SIM drop a few seconds after answering, logging `not in a cellular call: audio mode=3`:** that
+  SIM's calls are handled as VoIP by a carrier app (e.g. Google Fi with Wi-Fi calling on a Pixel), so the call audio
+  never passes through the modem. Turn off Wi-Fi calling for that SIM.
+- **PBX calls without `X-VSA-SIMSLOT` are refused on a dual-SIM phone:** Android has no default SIM for calls
+  ("ask every time"). Choose one in the SIM settings, or send the header from the PBX (see [Dual SIM](#dual-sim)).
 - **Shizuku 13.6.0 on MediaTek / Transsion (e.g. Infinix) phones:** the app's privileged service never
   starts (`NullPointerException` in `LoadedApk.makeApplicationInner`;
   [RikkaApps/Shizuku#1198](https://github.com/RikkaApps/Shizuku/issues/1198)). Install Shizuku 13.5.4 instead.
@@ -187,6 +192,20 @@ routes.
   - With a registrar-routing proxy in between (Flexisip etc.), the Request-URI user part must stay the gateway's
     own AoR, otherwise the proxy looks up the number in its registrar and answers 404 — so the number goes in
     `X-VSA-Dial` (see the dial plan below).
+
+### Dual SIM
+
+One trunk serves every SIM; the `X-VSA-SIMSLOT` header names the SIM by Android's **logical slot index**
+(0, 1, … as in `SubscriptionInfo.getSimSlotIndex()`; two eSIM profiles active on one chip are two slots).
+`adb … --es op status` lists them as `sims=0:<carrier>(sub<id>),1:…`.
+
+- **Cellular inbound**: the INVITE carries `X-VSA-SIMSLOT` with the slot the call arrived on; read it in the
+  dial plan with `${PJSIP_HEADER(read,X-VSA-SIMSLOT)}` if the SIMs need different destinations.
+- **SIP outbound**: `X-VSA-SIMSLOT` selects the SIM. Without it the gateway uses Android's default SIM for calls;
+  if there is none ("ask every time"), the call is refused and the app shows a warning. A slot with no active SIM,
+  or a call Telecom places on another SIM, gets `480`; a malformed value gets `400`. The phone never shows
+  Android's SIM picker for gateway calls.
+- Only one call is bridged at a time, whichever SIM it uses.
 
 ### PBX example (FreePBX / IssabelPBX with chan_pjsip)
 
@@ -233,7 +252,17 @@ exten => _X.,n,Hangup(${HANGUPCAUSE})
 
 [vsa-android-gw-hdr]
 exten => s,1,Set(PJSIP_HEADER(add,X-VSA-Dial)=${ARG1})
+exten => s,n,ExecIf($["${ARG2}" != ""]?Set(PJSIP_HEADER(add,X-VSA-SIMSLOT)=${ARG2}))
 exten => s,n,Return()
+
+; Dual SIM: one context per slot (see Dual SIM above)
+[vsa-android-gw-out-sim0]
+exten => _X.,1,Dial(PJSIP/android-gw,,b(vsa-android-gw-hdr^s^1(${EXTEN},0)))
+exten => _X.,n,Hangup(${HANGUPCAUSE})
+
+[vsa-android-gw-out-sim1]
+exten => _X.,1,Dial(PJSIP/android-gw,,b(vsa-android-gw-hdr^s^1(${EXTEN},1)))
+exten => _X.,n,Hangup(${HANGUPCAUSE})
 ```
 
 Web UI:
@@ -242,6 +271,8 @@ Web UI:
   `PJSIP/$OUTNUM$@android-gw` also works).
 - **Outbound Route**: a dedicated prefix (e.g. `9#7#`) with pattern `X.` using that trunk; it must be ordered
   before broader routes such as `9.`.
+- **Dual SIM**: one custom trunk per slot (`Local/$OUTNUM$@vsa-android-gw-out-sim0`, `…-sim1`) and one route
+  prefix per trunk, e.g. `9#7#` → slot 0 and `9#6#` → slot 1.
 - **Inbound Route**: DID `android-gw` → the destination of your choice.
 
 ### Reaching the PBX over the internet: Flexisip

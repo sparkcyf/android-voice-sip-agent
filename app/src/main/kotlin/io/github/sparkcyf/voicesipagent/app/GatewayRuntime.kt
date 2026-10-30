@@ -32,6 +32,7 @@ import io.github.sparkcyf.voicesipagent.sip.SipConfig
 import io.github.sparkcyf.voicesipagent.sip.SipLog
 import io.github.sparkcyf.voicesipagent.sip.SipUserAgent
 import io.github.sparkcyf.voicesipagent.telephony.CellularEndpoint
+import io.github.sparkcyf.voicesipagent.telephony.SimSlot
 import io.github.sparkcyf.voicesipagent.telephony.CallSnapshot
 import io.github.sparkcyf.voicesipagent.telephony.GatewayInCallService
 import io.github.sparkcyf.voicesipagent.voice.CallEndpoint
@@ -78,7 +79,16 @@ data class HealthState(
     val dialerChangeRunning: Boolean = false,
     val dialerChangeFailed: Boolean = false,
     val dialerChangeAcquire: Boolean = false,
+    val sims: List<SimSlot> = emptyList(),
+    /** Slot of the system default calling SIM; null when Android asks per call. */
+    val defaultSimSlot: Int? = null,
 ) {
+    /** PBX calls without X-VSA-SIMSLOT are refused while no default calling SIM is set. */
+    val simWarning: String?
+        get() = if (sims.size > 1 && defaultSimSlot == null)
+            "No default SIM for calls: PBX calls without X-VSA-SIMSLOT are refused. Choose one in Android SIM settings."
+        else null
+
     val privilegedReady: Boolean
         get() = callAccessReady && audioReady && shizuku == ShizukuConnector.State.CONNECTED
 
@@ -492,8 +502,10 @@ class GatewayRuntime private constructor(context: Context) {
             else -> "Gateway ready"
         }
         val ready = c.problem == null && (h.loopbackTest || h.sip.ready)
+        val sims = cellular.sims.active()
+        val defaultSim = cellular.sims.slotOf(cellular.sims.defaultAccount())
         _health.update { it.copy(gatewayRunning = gatewayEnabled, callAccessReady = access,
-            audioReady = audio, cellularReady = ready, readinessDetail = detail) }
+            audioReady = audio, cellularReady = ready, readinessDetail = detail, sims = sims, defaultSimSlot = defaultSim) }
         cellular.setReadiness(ready, detail)
         updateSipHold(c.problem)
         syncForegroundService()
@@ -698,6 +710,7 @@ class GatewayRuntime private constructor(context: Context) {
             _health.update { it.copy(sip = EndpointStatus(false, "transport ${s.sipTransport} unsupported by ${s.sipStack.id}")) }
             return
         }
+        if (s.sipStack == SipStack.BUILTIN) AppLog.w("the built-in SIP stack is deprecated; switch to pjsua2")
         try {
             val ep: CallEndpoint = when (s.sipStack) {
                 SipStack.BUILTIN -> SipUserAgent(
@@ -1015,6 +1028,7 @@ class GatewayRuntime private constructor(context: Context) {
             " shizuku=${h.shizuku} audio_method=${settings.audioMethod}:${audioMethodName(settings.audioMethod)}" +
             " audioReady=${h.audioReady} tap=${if (audio.active) audio.backend else "idle"}" +
             " earpiece_mute=${onOff(settings.muteEarpiece)} loopback=${onOff(h.loopbackTest)}" +
+            " sims=${h.sims.joinToString(",").ifEmpty { "none" }} default_sim=${h.defaultSimSlot ?: "none"}" +
             " calls=${h.calls.summary}" + (if (h.settingsPending) " settingsPending" else "")
     }
 
@@ -1053,6 +1067,8 @@ class GatewayRuntime private constructor(context: Context) {
             appendLine("sdk=${Build.VERSION.SDK_INT} callAccess=${settings.callAccess} effective=${h.effectiveCallAccess} " +
                 "defaultDialer=${h.holdsDialer} audioMethod=${settings.audioMethod} audioReady=${h.audioReady}")
             appendLine("dialerChangePending=${h.dialerChangePending} running=${h.dialerChangeRunning} ${_dialerMessage.value}")
+            appendLine("sims=${h.sims.joinToString(",").ifEmpty { "none" }} defaultSim=${h.defaultSimSlot ?: "none"}" +
+                (h.simWarning?.let { " warning=$it" } ?: ""))
             appendLine("calls=${h.calls.summary} settingsPending=${h.settingsPending}")
             appendLine("loopback=${h.loopbackTest} session=${h.session}")
             appendLine("callAudio=${callAudioStatus.value}")

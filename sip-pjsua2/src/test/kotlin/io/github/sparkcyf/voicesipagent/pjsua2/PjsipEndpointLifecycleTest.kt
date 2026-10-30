@@ -73,8 +73,8 @@ class PjsipEndpointLifecycleTest {
                 override fun info(msg: String) {}
                 override fun warn(msg: String, t: Throwable?) { warnings += msg }
             })
-        val first = PjsipCall(endpoint, LegDirection.OUTBOUND, Party("test"), "test", "p1")
-        val second = PjsipCall(endpoint, LegDirection.OUTBOUND, Party("test"), "test", "p2")
+        val first = PjsipCall(endpoint, LegDirection.OUTBOUND, Party("test"), "test", null, "p1")
+        val second = PjsipCall(endpoint, LegDirection.OUTBOUND, Party("test"), "test", null, "p2")
         first.addListener(object : CallLeg.Listener {
             override fun onStateChanged(leg: CallLeg, state: LegState) { error("listener failed") }
         })
@@ -108,7 +108,7 @@ class PjsipEndpointLifecycleTest {
         val statuses = mutableListOf<EndpointStatus>()
         endpoint.addStatusListener { _, status -> statuses += status }
         setStatus(endpoint, EndpointStatus(true, "registered"))
-        val leg = PjsipCall(endpoint, LegDirection.OUTBOUND, Party("test"), "test", "p1")
+        val leg = PjsipCall(endpoint, LegDirection.OUTBOUND, Party("test"), "test", null, "p1")
         // Exercise a connected local leg without loading the device-only JNI library on the host.
         AbstractCallLeg::class.java.getDeclaredMethod("transition", LegState::class.java, HangupCause::class.java)
             .apply { isAccessible = true }.invoke(leg, LegState.CONNECTED, null)

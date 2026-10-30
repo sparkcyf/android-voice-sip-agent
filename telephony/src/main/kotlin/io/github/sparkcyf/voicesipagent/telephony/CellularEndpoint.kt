@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.telecom.Call
+import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import io.github.sparkcyf.voicesipagent.voice.CallEndpoint
@@ -31,6 +32,10 @@ import java.util.concurrent.Executor
  * Only calls this endpoint owns are touched: inbound calls offered to the gateway, and outbound
  * calls it placed itself. Calls the user dials by hand, or that arrive while such a call is in
  * progress, are left to the stock phone app.
+ *
+ * Legs carry the logical SIM slot as [CallLeg.line]. Outbound calls are always placed on an
+ * explicit SIM account: the requested slot, else the system default calling SIM. Without either
+ * the call is refused rather than letting Telecom ask the user or pick a SIM.
  */
 class CellularEndpoint(
     context: Context,
@@ -38,6 +43,7 @@ class CellularEndpoint(
     private val logger: (String) -> Unit,
     private val main: Handler = Handler(Looper.getMainLooper()),
     internal val audioExecutor: Executor = CellularLeg.audioExecutor,
+    val sims: SimSlots = SystemSimSlots(context.applicationContext),
 ) : CallEndpoint {
     override val name = "cellular"
 
@@ -60,7 +66,7 @@ class CellularEndpoint(
     /** Outbound placements waiting for Telecom's onCallAdded. Main thread only. */
     private val pending = ArrayList<Pending>()
 
-    private class Pending(val leg: CellularLeg, val digits: String, val atMs: Long)
+    private class Pending(val leg: CellularLeg, val digits: String, val atMs: Long, val slot: Int?)
 
     @Volatile override var status = EndpointStatus(false, "companion not configured")
         private set
@@ -109,8 +115,8 @@ class CellularEndpoint(
         true
     }
 
-    override fun dial(target: String, caller: Party): CallLeg {
-        val leg = CellularLeg("c${ids.getAndIncrement()}", LegDirection.OUTBOUND, Party(target), target, this, main)
+    override fun dial(target: String, caller: Party, line: Int?): CallLeg {
+        val leg = CellularLeg("c${ids.getAndIncrement()}", LegDirection.OUTBOUND, Party(target), target, line, this, main)
         val digits = target.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }
         when {
             digits.isEmpty() -> leg.failPlacement(HangupCause.NOT_FOUND)
@@ -141,12 +147,21 @@ class CellularEndpoint(
             leg.failPlacement(HangupCause.BUSY)
             return
         }
-        val p = Pending(leg, digits, SystemClock.elapsedRealtime())
+        val account = placementAccount(leg.line) ?: run {
+            log(if (leg.line != null) "no active SIM in slot ${leg.line}" else
+                "no default calling SIM: set one in Android settings or request a slot")
+            leg.failPlacement(HangupCause.UNAVAILABLE)
+            return
+        }
+        val slot = sims.slotOf(account)
+        val p = Pending(leg, digits, SystemClock.elapsedRealtime(), slot)
         pending += p
         reportCalls()
         try {
-            telecom.placeCall(Uri.fromParts("tel", digits, null), Bundle())
-            log("placeCall ${redactNumber(digits)} (leg ${leg.id})")
+            val extras = Bundle()
+            extras.putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, account)
+            telecom.placeCall(Uri.fromParts("tel", digits, null), extras)
+            log("placeCall ${redactNumber(digits)} on slot ${slot ?: "?"} (leg ${leg.id})")
         } catch (e: SecurityException) {
             pending -= p
             reportCalls()
@@ -168,6 +183,9 @@ class CellularEndpoint(
             }
         }, PLACEMENT_TIMEOUT_MS)
     }
+
+    private fun placementAccount(line: Int?): PhoneAccountHandle? =
+        if (line != null) sims.accountFor(line) else sims.defaultAccount()
 
     // ------------------------------------------------------------ InCallService callbacks (main thread)
 
@@ -194,6 +212,12 @@ class CellularEndpoint(
                 pending -= match
                 if (!match.leg.stopping) legs[call] = match.leg
                 match.leg.bind(call)
+                val slot = sims.slotOf(details.accountHandle)
+                if (slot != match.slot) {
+                    // Never bridge a call on a SIM the PBX did not ask for.
+                    log("leg ${match.leg.id} placed on slot ${slot ?: "?"} instead of ${match.slot}")
+                    match.leg.hangup(HangupCause.UNAVAILABLE)
+                }
             }
             Call.Details.DIRECTION_INCOMING -> {
                 val h = handler
@@ -204,10 +228,12 @@ class CellularEndpoint(
                     reconcileCalls(); reportCalls()
                     return
                 }
-                val leg = CellularLeg("c${ids.getAndIncrement()}", LegDirection.INBOUND, Party(number.ifEmpty { null }, details.callerDisplayName), null, this, main)
+                val slot = sims.slotOf(details.accountHandle)
+                val leg = CellularLeg("c${ids.getAndIncrement()}", LegDirection.INBOUND,
+                    Party(number.ifEmpty { null }, details.callerDisplayName), null, slot, this, main)
                 legs[call] = leg
                 leg.bind(call)
-                log("incoming cellular call ${redactNumber(number)} -> gateway (leg ${leg.id})")
+                log("incoming cellular call ${redactNumber(number)} on slot ${slot ?: "?"} -> gateway (leg ${leg.id})")
                 h.onIncomingCall(leg)
             }
             else -> log("ignoring call with unknown direction")

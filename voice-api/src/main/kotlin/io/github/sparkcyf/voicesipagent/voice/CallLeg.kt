@@ -31,6 +31,12 @@ interface CallLeg {
 
     /** Inbound legs: what the caller dialed (e.g. the SIP Request-URI user). */
     val target: String?
+
+    /**
+     * Which line of a multi-line endpoint the call uses, e.g. the cellular SIM slot index. Inbound
+     * legs report the line the call arrived on (or was requested for); null = unknown/default.
+     */
+    val line: Int? get() = null
     val state: LegState
     val endCause: HangupCause?
 

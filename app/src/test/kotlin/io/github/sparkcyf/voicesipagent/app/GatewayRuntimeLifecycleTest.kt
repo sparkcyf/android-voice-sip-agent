@@ -27,6 +27,7 @@ import io.github.sparkcyf.voicesipagent.privileged.HealthKeys
 import io.github.sparkcyf.voicesipagent.privileged.ShizukuConnector
 import io.github.sparkcyf.voicesipagent.telephony.CallSnapshot
 import io.github.sparkcyf.voicesipagent.telephony.CellularEndpoint
+import io.github.sparkcyf.voicesipagent.telephony.SimSlots
 import io.github.sparkcyf.voicesipagent.sip.SipUserAgent
 import io.github.sparkcyf.voicesipagent.sip.SipConfig
 import io.github.sparkcyf.voicesipagent.voice.EndpointStatus
@@ -527,6 +528,7 @@ class GatewayRuntimeLifecycleTest {
             }
             scopes += mockConstruction(CellularEndpoint::class.java) { endpoint, _ ->
                 doAnswer { callsChanged = it.getArgument(0); null }.`when`(endpoint).onCallsChanged = any()
+                doReturn(mock(SimSlots::class.java)).`when`(endpoint).sims
             }
             scopes += mockConstruction(ShizukuConnector::class.java) { mock, _ ->
                 connector = mock

@@ -144,6 +144,7 @@ class GatewayRuntime private constructor(context: Context) {
         audioOpener,
         logger = { AppLog.i(it) },
         defaultSlot = { settings.defaultSimSlot },
+        inboundExcluded = { settings.inboundExcludedSlots },
     )
     /** [SipUserAgent] or [PjsipEndpoint], per [GatewaySettings.sipStack]. */
     private var sip: CallEndpoint? = null
@@ -487,6 +488,8 @@ class GatewayRuntime private constructor(context: Context) {
     /** Effective outbound default for status output, e.g. "system(1)", "0" or "refuse". */
     private fun defaultSimLabel(h: HealthState) = DefaultSim.id(settings.defaultSimSlot) +
         if (settings.defaultSimSlot == DefaultSim.SYSTEM) "(${h.systemSimSlot ?: "ask"})" else ""
+
+    private fun inboundOffLabel(s: GatewaySettings) = s.inboundExcludedSlots.sorted().joinToString(",").ifEmpty { "none" }
 
     // A restarted Shizuku server may not push its binder to this running app until an activity
     // comes to the foreground (see AGENT.md), so tell the user how to reconnect.
@@ -930,7 +933,7 @@ class GatewayRuntime private constructor(context: Context) {
         val platformOnly = old.copy(audioMethod = new.audioMethod, callAccess = new.callAccess,
             muteEarpiece = new.muteEarpiece, sipDebugLog = new.sipDebugLog,
             keepDefaultDialer = new.keepDefaultDialer, holdSipWhenNotReady = new.holdSipWhenNotReady,
-            defaultSimSlot = new.defaultSimSlot) == new
+            defaultSimSlot = new.defaultSimSlot, inboundExcludedSlots = new.inboundExcludedSlots) == new
         PjsipEndpoint.setVerboseLogging(new.sipDebugLog)
         if (!platformOnly) { startSip(); rebuildBridge() }
         configureCallAccess()
@@ -963,6 +966,15 @@ class GatewayRuntime private constructor(context: Context) {
         pendingSettings = pendingSettings?.copy(defaultSimSlot = slot)
         AppLog.i("outbound default SIM: ${DefaultSim.id(slot)}")
         updateReadiness()
+    }
+
+    /** Whether incoming calls on [slot] are bridged; read at each incoming call, so no restart is needed. */
+    fun setSimInbound(slot: Int, on: Boolean) = worker.execute {
+        require(slot >= 0) { "invalid SIM slot $slot" }
+        fun Set<Int>.with() = if (on) this - slot else this + slot
+        settingsStore.save(settings.let { it.copy(inboundExcludedSlots = it.inboundExcludedSlots.with()) }.also { _settings.value = it })
+        pendingSettings = pendingSettings?.let { it.copy(inboundExcludedSlots = it.inboundExcludedSlots.with()) }
+        AppLog.i("incoming calls on SIM $slot ${if (on) "taken over" else "left to the phone app"} (from next call)")
     }
 
     /** Changes the next switch-off, without touching the current call or any queued handoff. */
@@ -1052,6 +1064,7 @@ class GatewayRuntime private constructor(context: Context) {
             " audioReady=${h.audioReady} tap=${if (audio.active) audio.backend else "idle"}" +
             " earpiece_mute=${onOff(settings.muteEarpiece)} loopback=${onOff(h.loopbackTest)}" +
             " sims=${h.sims.joinToString(",").ifEmpty { "none" }} default_sim=${defaultSimLabel(h)}" +
+            " inbound_off=${inboundOffLabel(settings)}" +
             " calls=${h.calls.summary}" + (if (h.settingsPending) " settingsPending" else "")
     }
 
@@ -1064,7 +1077,7 @@ class GatewayRuntime private constructor(context: Context) {
             " prefixes=${s.allowedPrefixes.ifEmpty { "(any)" }}" +
             " audio_method=${s.audioMethod}:${audioMethodName(s.audioMethod)} call_access=${s.callAccess}" +
             " earpiece_mute=${onOff(s.muteEarpiece)} hold_sip=${onOff(s.holdSipWhenNotReady)} sip_debug=${onOff(s.sipDebugLog)}" +
-            " default_sim=${DefaultSim.id(s.defaultSimSlot)}" +
+            " default_sim=${DefaultSim.id(s.defaultSimSlot)} inbound_off=${inboundOffLabel(s)}" +
             (if (pendingSettings != null) " (applies after current calls end)" else "")
     }
 
@@ -1092,6 +1105,7 @@ class GatewayRuntime private constructor(context: Context) {
                 "defaultDialer=${h.holdsDialer} audioMethod=${settings.audioMethod} audioReady=${h.audioReady}")
             appendLine("dialerChangePending=${h.dialerChangePending} running=${h.dialerChangeRunning} ${_dialerMessage.value}")
             appendLine("sims=${h.sims.joinToString(",").ifEmpty { "none" }} defaultSim=${defaultSimLabel(h)}" +
+                " inboundOff=${inboundOffLabel(settings)}" +
                 (h.simWarning?.let { " warning=$it" } ?: ""))
             appendLine("calls=${h.calls.summary} settingsPending=${h.settingsPending}")
             appendLine("loopback=${h.loopbackTest} session=${h.session}")

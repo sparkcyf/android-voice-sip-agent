@@ -15,7 +15,7 @@ See the [dialer scope and phased fallback](docs/ANDROID_COMPATIBILITY_PLAN.md#di
 
 - [x] Select the outgoing SIM by logical slot (`X-VSA-SIMSLOT`), else the system default calling SIM; refuse when neither exists. Never let Telecom pick or prompt.
 - [x] Report the slot of incoming calls in `X-VSA-SIMSLOT`.
-- [ ] Configure which SIMs are eligible for gateway takeover. Keep calls on other accounts outside gateway ownership.
+- [x] Configure which SIMs' incoming calls are taken over (per-SIM switches); other calls stay with the phone app.
 - [ ] Detect a different SIM/eSIM profile in a slot (slot indices stay the same) and require explicit confirmation; removed slots already refuse with 480.
 - [ ] Verify simultaneous calls on both SIMs (Pixel 11 Pro reports IMS simultaneous calling).
 - [ ] Integrate account selection with manual dialer fallback and validate concurrent-call behavior across SIMs. Selecting two accounts does not imply support for two simultaneous audio bridges.

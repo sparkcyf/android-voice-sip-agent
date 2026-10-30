@@ -58,6 +58,7 @@ adb shell am broadcast -n $R --es op provision --es user … --es password '…'
 adb shell am broadcast -n $R --es op setup | sip-restart
 adb shell am broadcast -n $R --es op sip-stack --es stack pjsua2|builtin
 adb shell am broadcast -n $R --es op default-sim --es sim system|refuse|0|1   # SIM when X-VSA-SIMSLOT is absent
+adb shell am broadcast -n $R --es op sim-inbound --ei slot 0 --ez on false     # leave a SIM's incoming calls alone
 adb shell am broadcast -n $R --es op provision --es transport tls --es srtp optional …   # transport/srtp: pjsua2 only
 adb shell am broadcast -n $R --es op provision --ei audio_method 2   # 0 auto, 1 redirection, 2 direct; --ei call_access 0|1|2
 adb shell am broadcast -n $R --es op sip-debug --ez on true   # pjsip info-level logging, off by default (persisted)
@@ -107,7 +108,9 @@ Module dependencies: `:voice-api` ← `:sip`, `:gateway` (pure JVM, testable on 
   **Dual SIM**: `CallLeg.line` carries the logical SIM slot (`SimSlots`: SubscriptionInfo slot index ↔ Telecom
   SIM PhoneAccount). Outbound calls always pass `EXTRA_PHONE_ACCOUNT_HANDLE`: the requested slot, else the
   `defaultSimSlot` setting (`DefaultSim`: Android's default calling SIM, a fixed slot, or refuse; read per call).
-  A missing slot or no Android default fails `UNAVAILABLE`, never falling back to another SIM. A placed call that Telecom
+  A missing slot or no Android default fails `UNAVAILABLE`, never falling back to another SIM.
+  Incoming calls on slots in `inboundExcludedSlots` (per-SIM switches, read per call) are left to the phone app;
+  while any SIM is excluded, a call whose slot cannot be determined is left alone too. A placed call that Telecom
   reports on another slot is hung up. Both SIP stacks map `X-VSA-SIMSLOT` (0-based) to/from `line`; a malformed
   value gets 400.
 - **Privileged process (`:privileged`)**: a Shizuku UserService running in an app_process with shell uid 2000,

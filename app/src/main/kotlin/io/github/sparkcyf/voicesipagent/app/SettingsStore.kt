@@ -47,6 +47,8 @@ data class GatewaySettings(
     val sipStack: SipStack = SipStack.PJSUA2,
     /** Outbound SIM for PBX calls without X-VSA-SIMSLOT; see [DefaultSim]. */
     val defaultSimSlot: Int = DefaultSim.SYSTEM,
+    /** SIM slots whose incoming calls stay with the phone app; new SIMs are taken over. */
+    val inboundExcludedSlots: Set<Int> = emptySet(),
 ) {
     val sipConfigured: Boolean get() = server.isNotBlank() && username.isNotBlank() && password.isNotEmpty()
 
@@ -92,6 +94,8 @@ class SettingsStore(context: Context) {
         callAccess = prefs.getInt("call_access", CallAccess.AUTO).takeIf { it in 0..2 } ?: CallAccess.AUTO,
         sipStack = SipStack.of(prefs.getString("sip_stack", null)) ?: SipStack.PJSUA2,
         defaultSimSlot = prefs.getInt("default_sim_slot", DefaultSim.SYSTEM).takeIf(DefaultSim::isValid) ?: DefaultSim.SYSTEM,
+        inboundExcludedSlots = prefs.getString("inbound_excluded_slots", "")!!.split(',')
+            .mapNotNull { it.trim().toIntOrNull()?.takeIf { slot -> slot >= 0 } }.toSet(),
     )
 
     fun save(s: GatewaySettings) {
@@ -116,6 +120,7 @@ class SettingsStore(context: Context) {
             .putInt("call_access", s.callAccess)
             .putString("sip_stack", s.sipStack.id)
             .putInt("default_sim_slot", s.defaultSimSlot)
+            .putString("inbound_excluded_slots", s.inboundExcludedSlots.sorted().joinToString(","))
             .apply()
     }
 

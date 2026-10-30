@@ -144,6 +144,7 @@ adb shell am broadcast -n $R --es op takeover --ez on false
 adb shell am broadcast -n $R --es op earpiece-mute --ez on true
 adb shell am broadcast -n $R --es op sip-stack --es stack pjsua2
 adb shell am broadcast -n $R --es op default-sim --es sim system   # SIM without X-VSA-SIMSLOT: system|refuse|<slot>
+adb shell am broadcast -n $R --es op sim-inbound --ei slot 0 --ez on false   # leave SIM 0's incoming calls to the phone
 adb shell am broadcast -n $R --es op loopback --ez on true   # echo incoming cellular calls (test mode)
 adb shell am broadcast -n $R --es op sip-debug --ez on true  # verbose pjsip logging
 adb shell am broadcast -n $R --es op provision --ez hold_sip false   # stay registered while not ready
@@ -202,7 +203,9 @@ One trunk serves every SIM; the `X-VSA-SIMSLOT` header names the SIM by Android'
 `adb … --es op status` lists them as `sims=0:<carrier>(sub<id>),1:…`.
 
 - **Cellular inbound**: the INVITE carries `X-VSA-SIMSLOT` with the slot the call arrived on; read it in the
-  dial plan with `${PJSIP_HEADER(read,X-VSA-SIMSLOT)}` if the SIMs need different destinations.
+  dial plan with `${PJSIP_HEADER(read,X-VSA-SIMSLOT)}` if the SIMs need different destinations. The app's
+  **Take over incoming calls on SIM n** switches (all on by default) leave a SIM's incoming calls ringing on the
+  phone as usual, e.g. to bridge only a secondary SIM. They do not affect outbound calls.
 - **SIP outbound**: `X-VSA-SIMSLOT` selects the SIM. Without it, the app setting **SIM for PBX calls without
   X-VSA-SIMSLOT** decides: *System* (default) follows Android's default SIM for calls and refuses the call if
   Android asks every time; *SIM n* always uses that slot; *Refuse* requires the header. A slot with no active SIM,

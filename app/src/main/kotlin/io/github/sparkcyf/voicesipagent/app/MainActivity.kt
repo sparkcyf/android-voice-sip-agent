@@ -140,6 +140,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
                 else
                     "When enabled, attempts to silence the earpiece or speaker. The phone microphone remains muted during gateway calls. Changes apply to the next call."
             }
+            SimInboundToggles(cur.inboundExcludedSlots, h) { slot, on -> rt.setSimInbound(slot, on) }
             DefaultSimChoice(cur.defaultSimSlot, h) { rt.setDefaultSimSlot(it) }
             if (h.settingsPending && pendingSettings?.hasSameSipSettings(cur) != false) {
                 Text("Changes pending until calls end", style = MaterialTheme.typography.bodySmall)
@@ -344,6 +345,18 @@ private fun SettingsSection(rt: GatewayRuntime, editor: SipSettingsDraft) = with
         }
         Toggle("pjsip debug log", cur.sipDebugLog, { rt.setSipDebugLog(it) }) {
             "Info-level logs with masked numbers"
+        }
+    }
+}
+
+@Composable
+private fun SimInboundToggles(excluded: Set<Int>, h: HealthState, onChange: (Int, Boolean) -> Unit) {
+    // Excluded slots stay listed while their SIM is inactive, so they can be switched back on.
+    val slots = (h.sims.map { it.slot } + excluded).distinct().sorted()
+    slots.forEach { slot ->
+        val carrier = h.sims.firstOrNull { it.slot == slot }?.carrier ?: "no active SIM"
+        Toggle("Take over incoming calls on SIM $slot", slot !in excluded, { onChange(slot, it) }) {
+            if (slot in excluded) "$carrier: calls ring on this phone as usual" else "$carrier: calls are bridged to the PBX"
         }
     }
 }

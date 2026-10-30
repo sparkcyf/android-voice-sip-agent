@@ -130,6 +130,7 @@ adb shell am broadcast -n $R --es op takeover --ez on false
 adb shell am broadcast -n $R --es op earpiece-mute --ez on true
 adb shell am broadcast -n $R --es op sip-stack --es stack pjsua2
 adb shell am broadcast -n $R --es op default-sim --es sim system   # 不带 X-VSA-SIMSLOT 时用哪张卡：system|refuse|<卡槽>
+adb shell am broadcast -n $R --es op sim-inbound --ei slot 0 --ez on false   # 卡 0 的来电不接管，留给手机
 adb shell am broadcast -n $R --es op loopback --ez on true   # 回声测试：蜂窝来电直接回声
 adb shell am broadcast -n $R --es op sip-debug --ez on true  # pjsip 详细日志
 adb shell am broadcast -n $R --es op provision --ez hold_sip false   # 未就绪时也保持注册
@@ -181,7 +182,8 @@ adb logcat -s VoiceSipAgent VsaPrivileged VsaTap
 `adb … --es op status` 会列出 `sims=0:<运营商>(sub<id>),1:…`。
 
 - **蜂窝来电**：INVITE 带有 `X-VSA-SIMSLOT`，值为来电所在的卡槽；需要按卡区分去向时，可在拨号方案中用
-  `${PJSIP_HEADER(read,X-VSA-SIMSLOT)}` 读取。
+  `${PJSIP_HEADER(read,X-VSA-SIMSLOT)}` 读取。App 里的 **Take over incoming calls on SIM n** 开关（默认全开）
+  关掉后，这张卡的来电照常在手机上响铃，例如只接管副卡。这些开关不影响去电。
 - **SIP 去电**：用 `X-VSA-SIMSLOT` 选卡。不带该头时由 App 设置 **SIM for PBX calls without X-VSA-SIMSLOT** 决定：
   *System*（默认）跟随 Android 的默认通话卡，Android 设为"每次询问"时拒绝呼叫；*SIM n* 固定用该卡槽；*Refuse* 要求必须带头。
   卡槽里没有启用的卡，或 Telecom 把电话放到了别的卡上，回 `480`（不会改用另一张卡）；值格式错误回 `400`。

@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *   ... --es op earpiece-mute --ez on false
  *   ... --es op sip-stack --es stack pjsua2|builtin
  *   ... --es op default-sim --es sim system|refuse|<slot>   (SIM for PBX calls without X-VSA-SIMSLOT)
+ *   ... --es op sim-inbound --ei slot 0 --ez on false      (leave that SIM's incoming calls to the phone app)
  *   ... --es op provision --es server sip.example.org --ei port 5061 --es transport tls --es domain sip.example.org [--es srtp optional]
  *   ... --es op provision --ei audio_method 2      (0 auto, 1 redirection, 2 direct)
  *   ... --es op sip-debug --ez on true      (pjsip info-level logs; off by default)
@@ -71,6 +72,7 @@ class AdbControlReceiver : BroadcastReceiver() {
             "loopback", "takeover", "earpiece-mute", "sip-debug" -> setOf("on")
             "sip-stack" -> setOf("stack")
             "default-sim" -> setOf("sim")
+            "sim-inbound" -> setOf("slot", "on")
             "provision" -> setOf("server", "port", "transport", "srtp", "user", "password", "domain",
                 "target", "prefixes", "audio_method", "call_access", "hold_sip")
             else -> invalid("unknown op; see README adb control")
@@ -111,6 +113,16 @@ class AdbControlReceiver : BroadcastReceiver() {
                     ?: invalid("default-sim needs --es sim system|refuse|<slot>")
                 val action: (GatewayRuntime) -> (() -> String) = { rt ->
                     rt.setDefaultSimSlot(slot)
+                    rt::settingsLine
+                }
+                action
+            }
+            "sim-inbound" -> {
+                val slot = intent.argument<Int>("slot")?.takeIf { it >= 0 }
+                    ?: invalid("sim-inbound needs --ei slot <slot> [--ez on true|false]")
+                val on = intent.argument<Boolean>("on") ?: true
+                val action: (GatewayRuntime) -> (() -> String) = { rt ->
+                    rt.setSimInbound(slot, on)
                     rt::settingsLine
                 }
                 action

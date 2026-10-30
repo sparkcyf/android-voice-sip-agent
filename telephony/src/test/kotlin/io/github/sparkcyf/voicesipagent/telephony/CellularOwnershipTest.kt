@@ -45,11 +45,15 @@ class CellularOwnershipTest {
     private var originalMute = false
     private val simAccount = mock(PhoneAccountHandle::class.java)
     private val sim1Account = mock(PhoneAccountHandle::class.java)
+    private val unknownSlotAccount = mock(PhoneAccountHandle::class.java)
     private var defaultSim: PhoneAccountHandle? = simAccount
     private var defaultSlot = DefaultSim.SYSTEM
+    private var inboundExcluded = emptySet<Int>()
     private val sims = object : SimSlots {
         override fun active() = listOf(SimSlot(0, 1, "Test", simAccount), SimSlot(1, 5, "Other", sim1Account))
-        override fun slotOf(account: PhoneAccountHandle?) = when (account) { null -> null; sim1Account -> 1; else -> 0 }
+        override fun slotOf(account: PhoneAccountHandle?) = when (account) {
+            null, unknownSlotAccount -> null; sim1Account -> 1; else -> 0
+        }
         override fun defaultAccount() = defaultSim
     }
 
@@ -77,7 +81,7 @@ class CellularOwnershipTest {
             if (earlyLoss) onLost("socket died during open")
             if (openFailure) error("mode not settled")
             Handle(failHandleClose).also { opened = it }
-        }, {}, main, Executor { audioTasks += it }, sims, { defaultSlot })
+        }, {}, main, Executor { audioTasks += it }, sims, { defaultSlot }, { inboundExcluded })
         endpoint.setReadiness(true, "ready")
         endpoint.setIncomingCallHandler { leg = it as CellularLeg }
         CellularEndpoint.attachService(service)
@@ -318,6 +322,36 @@ class CellularOwnershipTest {
     }
 
     @Test fun inboundLegReportsItsSimSlot() {
+        endpoint.onCallAdded(service, call)
+        assertEquals(0, leg.line)
+    }
+
+    @Test fun incomingCallOnExcludedSlotIsLeftToThePhoneApp() {
+        inboundExcluded = setOf(0)
+        endpoint.onCallAdded(service, call)
+        assertFalse(::leg.isInitialized)
+        verify(call, never()).answer(anyInt())
+        verify(service, never()).setMuted(anyBoolean())
+    }
+
+    @Test fun unknownSlotIsLeftAloneOnlyWhileASimIsExcluded() {
+        val details = call.details
+        doReturn(unknownSlotAccount).`when`(details).accountHandle
+        inboundExcluded = setOf(1)
+        endpoint.onCallAdded(service, call)
+        assertFalse(::leg.isInitialized)
+
+        inboundExcluded = emptySet()
+        val second = makeCall(Call.STATE_RINGING)
+        val secondDetails = second.details
+        doReturn(unknownSlotAccount).`when`(secondDetails).accountHandle
+        endpoint.onCallRemoved(service, call)
+        endpoint.onCallAdded(service, second)
+        assertNull(leg.line)
+    }
+
+    @Test fun incomingCallOnOtherSlotIsStillTakenOver() {
+        inboundExcluded = setOf(1)
         endpoint.onCallAdded(service, call)
         assertEquals(0, leg.line)
     }

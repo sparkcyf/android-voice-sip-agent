@@ -35,6 +35,7 @@ import java.util.concurrent.Executor
  * Legs carry the logical SIM slot as [CallLeg.line]. Outbound calls are always placed on an
  * explicit SIM account: the requested slot, else [defaultSlot] (see [DefaultSim]). A missing
  * slot is refused rather than letting Telecom ask the user, pick a SIM or fall back to another.
+ * Incoming calls on slots in [inboundExcluded] are left to the phone app.
  */
 class CellularEndpoint(
     context: Context,
@@ -45,6 +46,8 @@ class CellularEndpoint(
     val sims: SimSlots = SystemSimSlots(context.applicationContext),
     /** Read at each placement without a requested slot. */
     private val defaultSlot: () -> Int = { DefaultSim.SYSTEM },
+    /** Slots whose incoming calls stay with the phone app; read at each incoming call. */
+    private val inboundExcluded: () -> Set<Int> = { emptySet() },
 ) : CallEndpoint {
     override val name = "cellular"
 
@@ -227,6 +230,12 @@ class CellularEndpoint(
             }
             Call.Details.DIRECTION_INCOMING -> {
                 val h = handler
+                val slot = sims.slotOf(details.accountHandle)
+                if (!takesInbound(slot)) {
+                    log("leaving incoming call ${redactNumber(number)} on slot ${slot ?: "?"} to the phone app: not taken over")
+                    reconcileCalls(); reportCalls()
+                    return
+                }
                 if (h == null || !status.ready || call.telecomState != Call.STATE_RINGING || legs.isNotEmpty() ||
                     pending.isNotEmpty() || hasForeignCall(except = call) || !isCellular(call) ||
                     (number.isNotEmpty() && isEmergencyNumber(number))) {
@@ -234,7 +243,6 @@ class CellularEndpoint(
                     reconcileCalls(); reportCalls()
                     return
                 }
-                val slot = sims.slotOf(details.accountHandle)
                 val leg = CellularLeg("c${ids.getAndIncrement()}", LegDirection.INBOUND,
                     Party(number.ifEmpty { null }, details.callerDisplayName), null, slot, this, main)
                 legs[call] = leg
@@ -245,6 +253,12 @@ class CellularEndpoint(
             else -> log("ignoring call with unknown direction")
         }
         reconcileCalls(); reportCalls()
+    }
+
+    /** An unknown slot is taken over only while no SIM is excluded. */
+    private fun takesInbound(slot: Int?): Boolean {
+        val excluded = inboundExcluded()
+        return if (slot == null) excluded.isEmpty() else slot !in excluded
     }
 
     internal fun onCallRemoved(source: GatewayInCallService, call: Call) {

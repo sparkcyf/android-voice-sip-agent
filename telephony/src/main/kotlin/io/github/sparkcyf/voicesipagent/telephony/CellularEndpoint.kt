@@ -10,7 +10,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.telecom.Call
-import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import io.github.sparkcyf.voicesipagent.voice.CallEndpoint
@@ -34,8 +33,8 @@ import java.util.concurrent.Executor
  * progress, are left to the stock phone app.
  *
  * Legs carry the logical SIM slot as [CallLeg.line]. Outbound calls are always placed on an
- * explicit SIM account: the requested slot, else the system default calling SIM. Without either
- * the call is refused rather than letting Telecom ask the user or pick a SIM.
+ * explicit SIM account: the requested slot, else [defaultSlot] (see [DefaultSim]). A missing
+ * slot is refused rather than letting Telecom ask the user, pick a SIM or fall back to another.
  */
 class CellularEndpoint(
     context: Context,
@@ -44,6 +43,8 @@ class CellularEndpoint(
     private val main: Handler = Handler(Looper.getMainLooper()),
     internal val audioExecutor: Executor = CellularLeg.audioExecutor,
     val sims: SimSlots = SystemSimSlots(context.applicationContext),
+    /** Read at each placement without a requested slot. */
+    private val defaultSlot: () -> Int = { DefaultSim.SYSTEM },
 ) : CallEndpoint {
     override val name = "cellular"
 
@@ -147,21 +148,29 @@ class CellularEndpoint(
             leg.failPlacement(HangupCause.BUSY)
             return
         }
-        val account = placementAccount(leg.line) ?: run {
-            log(if (leg.line != null) "no active SIM in slot ${leg.line}" else
-                "no default calling SIM: set one in Android settings or request a slot")
+        val slot = leg.line ?: defaultSlot()
+        val account = when (slot) {
+            DefaultSim.SYSTEM -> sims.defaultAccount()
+            DefaultSim.REFUSE -> null
+            else -> sims.accountFor(slot)
+        } ?: run {
+            log(when (slot) {
+                DefaultSim.SYSTEM -> "no slot requested and Android has no default SIM for calls"
+                DefaultSim.REFUSE -> "no slot requested; the outbound default is set to refuse"
+                else -> "no active SIM in slot $slot"
+            })
             leg.failPlacement(HangupCause.UNAVAILABLE)
             return
         }
-        val slot = sims.slotOf(account)
-        val p = Pending(leg, digits, SystemClock.elapsedRealtime(), slot)
+        val placedSlot = sims.slotOf(account)
+        val p = Pending(leg, digits, SystemClock.elapsedRealtime(), placedSlot)
         pending += p
         reportCalls()
         try {
             val extras = Bundle()
             extras.putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, account)
             telecom.placeCall(Uri.fromParts("tel", digits, null), extras)
-            log("placeCall ${redactNumber(digits)} on slot ${slot ?: "?"} (leg ${leg.id})")
+            log("placeCall ${redactNumber(digits)} on slot ${placedSlot ?: "?"} (leg ${leg.id})")
         } catch (e: SecurityException) {
             pending -= p
             reportCalls()
@@ -183,9 +192,6 @@ class CellularEndpoint(
             }
         }, PLACEMENT_TIMEOUT_MS)
     }
-
-    private fun placementAccount(line: Int?): PhoneAccountHandle? =
-        if (line != null) sims.accountFor(line) else sims.defaultAccount()
 
     // ------------------------------------------------------------ InCallService callbacks (main thread)
 

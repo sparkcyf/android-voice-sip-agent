@@ -8,6 +8,7 @@ import android.util.Base64
 import io.github.sparkcyf.voicesipagent.gateway.BusyPolicy
 import io.github.sparkcyf.voicesipagent.privileged.AudioMethod
 import io.github.sparkcyf.voicesipagent.privileged.CallAccess
+import io.github.sparkcyf.voicesipagent.telephony.DefaultSim
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -44,6 +45,8 @@ data class GatewaySettings(
     val callAccess: Int = CallAccess.AUTO,
     /** Which SIP implementation backs the PBX side. */
     val sipStack: SipStack = SipStack.PJSUA2,
+    /** Outbound SIM for PBX calls without X-VSA-SIMSLOT; see [DefaultSim]. */
+    val defaultSimSlot: Int = DefaultSim.SYSTEM,
 ) {
     val sipConfigured: Boolean get() = server.isNotBlank() && username.isNotBlank() && password.isNotEmpty()
 
@@ -88,6 +91,7 @@ class SettingsStore(context: Context) {
         audioMethod = prefs.getInt("audio_method", AudioMethod.AUTO).takeIf { it in 0..2 } ?: AudioMethod.AUTO,
         callAccess = prefs.getInt("call_access", CallAccess.AUTO).takeIf { it in 0..2 } ?: CallAccess.AUTO,
         sipStack = SipStack.of(prefs.getString("sip_stack", null)) ?: SipStack.PJSUA2,
+        defaultSimSlot = prefs.getInt("default_sim_slot", DefaultSim.SYSTEM).takeIf(DefaultSim::isValid) ?: DefaultSim.SYSTEM,
     )
 
     fun save(s: GatewaySettings) {
@@ -111,6 +115,7 @@ class SettingsStore(context: Context) {
             .putInt("audio_method", s.audioMethod)
             .putInt("call_access", s.callAccess)
             .putString("sip_stack", s.sipStack.id)
+            .putInt("default_sim_slot", s.defaultSimSlot)
             .apply()
     }
 

@@ -143,6 +143,7 @@ adb shell am broadcast -n $R --es op status            # one-line summary; full 
 adb shell am broadcast -n $R --es op takeover --ez on false
 adb shell am broadcast -n $R --es op earpiece-mute --ez on true
 adb shell am broadcast -n $R --es op sip-stack --es stack pjsua2
+adb shell am broadcast -n $R --es op default-sim --es sim system   # SIM without X-VSA-SIMSLOT: system|refuse|<slot>
 adb shell am broadcast -n $R --es op loopback --ez on true   # echo incoming cellular calls (test mode)
 adb shell am broadcast -n $R --es op sip-debug --ez on true  # verbose pjsip logging
 adb shell am broadcast -n $R --es op provision --ez hold_sip false   # stay registered while not ready
@@ -166,7 +167,8 @@ Phone numbers are logged with only their last two digits; call audio is never lo
   SIM's calls are handled as VoIP by a carrier app (e.g. Google Fi with Wi-Fi calling on a Pixel), so the call audio
   never passes through the modem. Turn off Wi-Fi calling for that SIM.
 - **PBX calls without `X-VSA-SIMSLOT` are refused on a dual-SIM phone:** Android has no default SIM for calls
-  ("ask every time"). Choose one in the SIM settings, or send the header from the PBX (see [Dual SIM](#dual-sim)).
+  ("ask every time"). Pick a SIM in the app, choose one in Android's SIM settings, or send the header from the PBX
+  (see [Dual SIM](#dual-sim)).
 - **Shizuku 13.6.0 on MediaTek / Transsion (e.g. Infinix) phones:** the app's privileged service never
   starts (`NullPointerException` in `LoadedApk.makeApplicationInner`;
   [RikkaApps/Shizuku#1198](https://github.com/RikkaApps/Shizuku/issues/1198)). Install Shizuku 13.5.4 instead.
@@ -201,10 +203,11 @@ One trunk serves every SIM; the `X-VSA-SIMSLOT` header names the SIM by Android'
 
 - **Cellular inbound**: the INVITE carries `X-VSA-SIMSLOT` with the slot the call arrived on; read it in the
   dial plan with `${PJSIP_HEADER(read,X-VSA-SIMSLOT)}` if the SIMs need different destinations.
-- **SIP outbound**: `X-VSA-SIMSLOT` selects the SIM. Without it the gateway uses Android's default SIM for calls;
-  if there is none ("ask every time"), the call is refused and the app shows a warning. A slot with no active SIM,
-  or a call Telecom places on another SIM, gets `480`; a malformed value gets `400`. The phone never shows
-  Android's SIM picker for gateway calls.
+- **SIP outbound**: `X-VSA-SIMSLOT` selects the SIM. Without it, the app setting **SIM for PBX calls without
+  X-VSA-SIMSLOT** decides: *System* (default) follows Android's default SIM for calls and refuses the call if
+  Android asks every time; *SIM n* always uses that slot; *Refuse* requires the header. A slot with no active SIM,
+  or a call Telecom places on another SIM, gets `480` (there is no fallback to another SIM); a malformed value gets
+  `400`. The phone never shows Android's SIM picker for gateway calls.
 - Only one call is bridged at a time, whichever SIM it uses.
 
 ### PBX example (FreePBX / IssabelPBX with chan_pjsip)

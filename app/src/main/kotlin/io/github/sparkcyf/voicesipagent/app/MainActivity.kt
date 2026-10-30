@@ -56,6 +56,7 @@ import io.github.sparkcyf.voicesipagent.privileged.AudioMethod
 import io.github.sparkcyf.voicesipagent.privileged.CallAccess
 import io.github.sparkcyf.voicesipagent.privileged.CallAudioStatus
 import io.github.sparkcyf.voicesipagent.privileged.ShizukuConnector
+import io.github.sparkcyf.voicesipagent.telephony.DefaultSim
 
 class MainActivity : DialerRoleActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -139,6 +140,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
                 else
                     "When enabled, attempts to silence the earpiece or speaker. The phone microphone remains muted during gateway calls. Changes apply to the next call."
             }
+            DefaultSimChoice(cur.defaultSimSlot, h) { rt.setDefaultSimSlot(it) }
             if (h.settingsPending && pendingSettings?.hasSameSipSettings(cur) != false) {
                 Text("Changes pending until calls end", style = MaterialTheme.typography.bodySmall)
             }
@@ -157,9 +159,8 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
             Check("Doze allowlisted", p?.get(HealthKeys.DOZE_ALLOWLISTED) == true)
             Check("SIP registration", h.sip.ready,
                 if (h.takeover) h.sip.detail else "Stopped while takeover is off")
-            Text("SIM slots: " + h.sims.joinToString { "${it.slot} ${it.carrier}" }.ifEmpty { "none" } +
-                "; default for calls: ${h.defaultSimSlot ?: "ask every time"}", style = MaterialTheme.typography.bodySmall)
-            h.simWarning?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            Text("SIM slots: " + h.sims.joinToString { "${it.slot} ${it.carrier}" }.ifEmpty { "none" },
+                style = MaterialTheme.typography.bodySmall)
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -345,6 +346,21 @@ private fun SettingsSection(rt: GatewayRuntime, editor: SipSettingsDraft) = with
             "Info-level logs with masked numbers"
         }
     }
+}
+
+@Composable
+private fun DefaultSimChoice(selected: Int, h: HealthState, onSelect: (Int) -> Unit) {
+    val slots = (h.sims.map { it.slot } + listOfNotNull(selected.takeIf { it >= 0 })).distinct().sorted()
+    Choice("SIM for PBX calls without X-VSA-SIMSLOT", listOf(DefaultSim.SYSTEM) + slots + DefaultSim.REFUSE, selected,
+        { when (it) { DefaultSim.SYSTEM -> "System"; DefaultSim.REFUSE -> "Refuse"; else -> "SIM $it" } }, onSelect = onSelect)
+    val carrier = h.sims.firstOrNull { it.slot == selected }?.carrier
+    Text(when (selected) {
+        DefaultSim.SYSTEM -> "Follows Android's default SIM for calls (now: " +
+            (h.systemSimSlot?.let { s -> "SIM $s ${h.sims.firstOrNull { it.slot == s }?.carrier.orEmpty()}".trim() } ?: "ask every time") + ")."
+        DefaultSim.REFUSE -> "The PBX must choose the SIM with X-VSA-SIMSLOT."
+        else -> "Always SIM $selected${carrier?.let { " ($it)" } ?: ""}; refused if that slot has no active SIM."
+    } + " Applies to the next call.", style = MaterialTheme.typography.bodySmall)
+    h.simWarning?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

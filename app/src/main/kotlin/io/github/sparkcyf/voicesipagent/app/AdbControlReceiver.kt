@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import io.github.sparkcyf.voicesipagent.pjsua2.SipTransport
 import io.github.sparkcyf.voicesipagent.pjsua2.SrtpPolicy
+import io.github.sparkcyf.voicesipagent.telephony.DefaultSim
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -16,6 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *   ... --es op setup | sip-restart | loopback --ez on true | takeover --ez on false
  *   ... --es op earpiece-mute --ez on false
  *   ... --es op sip-stack --es stack pjsua2|builtin
+ *   ... --es op default-sim --es sim system|refuse|<slot>   (SIM for PBX calls without X-VSA-SIMSLOT)
  *   ... --es op provision --es server sip.example.org --ei port 5061 --es transport tls --es domain sip.example.org [--es srtp optional]
  *   ... --es op provision --ei audio_method 2      (0 auto, 1 redirection, 2 direct)
  *   ... --es op sip-debug --ez on true      (pjsip info-level logs; off by default)
@@ -68,6 +70,7 @@ class AdbControlReceiver : BroadcastReceiver() {
             "status", "setup", "sip-restart" -> emptySet()
             "loopback", "takeover", "earpiece-mute", "sip-debug" -> setOf("on")
             "sip-stack" -> setOf("stack")
+            "default-sim" -> setOf("sim")
             "provision" -> setOf("server", "port", "transport", "srtp", "user", "password", "domain",
                 "target", "prefixes", "audio_method", "call_access", "hold_sip")
             else -> invalid("unknown op; see README adb control")
@@ -99,6 +102,15 @@ class AdbControlReceiver : BroadcastReceiver() {
                     ?: invalid("sip-stack needs --es stack builtin|pjsua2")
                 val action: (GatewayRuntime) -> (() -> String) = { rt ->
                     rt.applySettings { it.copy(sipStack = stack) }
+                    rt::settingsLine
+                }
+                action
+            }
+            "default-sim" -> {
+                val slot = DefaultSim.of(intent.argument<String>("sim"))
+                    ?: invalid("default-sim needs --es sim system|refuse|<slot>")
+                val action: (GatewayRuntime) -> (() -> String) = { rt ->
+                    rt.setDefaultSimSlot(slot)
                     rt::settingsLine
                 }
                 action

@@ -12,6 +12,27 @@ data class SimSlot(val slot: Int, val subId: Int, val carrier: String, val accou
     override fun toString() = "$slot:$carrier(sub$subId)"
 }
 
+/** Outbound SIM when a call requests no slot: [SYSTEM], [REFUSE] or a logical slot index (>= 0). */
+object DefaultSim {
+    /** Android's default SIM for calls; refused when Android asks per call. */
+    const val SYSTEM = -1
+    const val REFUSE = -2
+
+    fun isValid(value: Int) = value >= REFUSE
+
+    fun id(value: Int) = when (value) {
+        SYSTEM -> "system"
+        REFUSE -> "refuse"
+        else -> value.toString()
+    }
+
+    fun of(id: String?): Int? = when (id) {
+        "system" -> SYSTEM
+        "refuse" -> REFUSE
+        else -> id?.toIntOrNull()?.takeIf { it >= 0 }
+    }
+}
+
 /**
  * Maps logical SIM slots to Telecom phone accounts. Slots are logical modem slots, so two eSIM
  * profiles active on one eUICC (MEP) are distinct slots. Every lookup fails closed (empty/null).

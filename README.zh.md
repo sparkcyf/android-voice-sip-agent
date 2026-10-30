@@ -129,6 +129,7 @@ adb shell am broadcast -n $R --es op status            # 返回一行摘要；�
 adb shell am broadcast -n $R --es op takeover --ez on false
 adb shell am broadcast -n $R --es op earpiece-mute --ez on true
 adb shell am broadcast -n $R --es op sip-stack --es stack pjsua2
+adb shell am broadcast -n $R --es op default-sim --es sim system   # 不带 X-VSA-SIMSLOT 时用哪张卡：system|refuse|<卡槽>
 adb shell am broadcast -n $R --es op loopback --ez on true   # 回声测试：蜂窝来电直接回声
 adb shell am broadcast -n $R --es op sip-debug --ez on true  # pjsip 详细日志
 adb shell am broadcast -n $R --es op provision --ez hold_sip false   # 未就绪时也保持注册
@@ -150,8 +151,8 @@ adb logcat -s VoiceSipAgent VsaPrivileged VsaTap
   在上表的社区测试设备上，只有这个组合能双向通话。
 - **某张卡的来电接通几秒后被挂断，日志出现 `not in a cellular call: audio mode=3`**：这张卡的通话被运营商 App 当作 VoIP
   处理（例如 Pixel 上开启 Wi-Fi 通话的 Google Fi），通话音频不经过基带。请关闭这张卡的 Wi-Fi 通话。
-- **双卡手机上不带 `X-VSA-SIMSLOT` 的 PBX 去电被拒绝**：Android 没有设置默认通话卡（"每次询问"）。请在 SIM 卡设置里选一张，
-  或者由 PBX 发送该头（见[双卡](#双卡)）。
+- **双卡手机上不带 `X-VSA-SIMSLOT` 的 PBX 去电被拒绝**：Android 没有设置默认通话卡（"每次询问"）。可以在 App 里指定一张卡、
+  在 Android 的 SIM 卡设置里选一张，或者由 PBX 发送该头（见[双卡](#双卡)）。
 - **MediaTek / 传音（如 Infinix）手机上的 Shizuku 13.6.0**：App 的特权服务始终无法启动
   （`LoadedApk.makeApplicationInner` 中的 `NullPointerException`；
   [RikkaApps/Shizuku#1198](https://github.com/RikkaApps/Shizuku/issues/1198)）。请改装 Shizuku 13.5.4。
@@ -181,8 +182,9 @@ adb logcat -s VoiceSipAgent VsaPrivileged VsaTap
 
 - **蜂窝来电**：INVITE 带有 `X-VSA-SIMSLOT`，值为来电所在的卡槽；需要按卡区分去向时，可在拨号方案中用
   `${PJSIP_HEADER(read,X-VSA-SIMSLOT)}` 读取。
-- **SIP 去电**：用 `X-VSA-SIMSLOT` 选卡。不带该头时使用 Android 的默认通话卡；没有默认卡（"每次询问"）时拒绝呼叫，
-  App 里会显示警告。卡槽里没有启用的卡，或 Telecom 把电话放到了别的卡上，回 `480`；值格式错误回 `400`。
+- **SIP 去电**：用 `X-VSA-SIMSLOT` 选卡。不带该头时由 App 设置 **SIM for PBX calls without X-VSA-SIMSLOT** 决定：
+  *System*（默认）跟随 Android 的默认通话卡，Android 设为"每次询问"时拒绝呼叫；*SIM n* 固定用该卡槽；*Refuse* 要求必须带头。
+  卡槽里没有启用的卡，或 Telecom 把电话放到了别的卡上，回 `480`（不会改用另一张卡）；值格式错误回 `400`。
   网关呼叫永远不会弹出 Android 的选卡框。
 - 无论用哪张卡，同一时间只桥接一路通话。
 

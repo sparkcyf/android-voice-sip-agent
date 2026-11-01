@@ -6,7 +6,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
 import android.os.Build
+import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import io.github.sparkcyf.voicesipagent.privileged.CallAccess
 import rikka.shizuku.Shizuku
@@ -14,6 +16,12 @@ import rikka.shizuku.Shizuku
 /** Role acquisition is confined to explicit UI actions. */
 abstract class DialerRoleActivity : ComponentActivity() {
     protected val roleMessage get() = GatewayRuntime.get(this).dialerMessage
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        // System bar icons follow the day/night theme; the manifest theme alone keeps them light.
+        enableEdgeToEdge()
+        super.onCreate(savedInstanceState)
+    }
     private fun message(value: String) = GatewayRuntime.get(this).showDialerMessage(value)
     private val roleRequest = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val held = getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_DIALER)

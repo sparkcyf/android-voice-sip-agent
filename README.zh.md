@@ -13,6 +13,19 @@
 特权操作（通话音频拦截、Telecom 伴侣覆盖、appops）通过以 shell 用户（uid 2000）运行的
 [Shizuku](https://shizuku.rikka.app/) 完成，**不需要 root**。项目依赖隐藏的系统 API，因此不会在 Google Play 上架。
 
+<table>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <img src="docs/images/takeover-dual-sim.png" width="320" alt="接管设置与每张卡的开关"><br>
+      <sub>接管总开关、每张卡的来电接管，以及 PBX 去电使用的 SIM 卡</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <img src="docs/images/bridged-call.png" width="320" alt="健康检查与正在桥接的通话"><br>
+      <sub>一通蜂窝来电已桥接到 PBX，本机通话声音已静音</sub>
+    </td>
+  </tr>
+</table>
+
 > [!WARNING]
 > 这是一个基于未公开 Android 行为的个人项目，任何一次系统更新都可能让它失效，也可能掉话或把呼叫送错地方。
 > 本软件**按原样提供，不附带任何形式的担保**。使用前请阅读[免责声明](#免责声明)。
@@ -95,6 +108,8 @@ TLS 用 Android 系统 CA 库校验服务器证书链和主机名，仅支持 TL
 
 ### 网关状态与恢复
 
+<img src="docs/images/health.png" width="360" alt="各项检查均通过的 Health 区">
+
 在 **Health** 中查看 setup 或注册错误。接管开启时，可在授权 Shizuku 后使用 **Re-run setup** 重新设置，
 或使用 **Reconnect SIP** 根据已保存的凭据重新注册。
 
@@ -167,6 +182,21 @@ adb logcat -s VoiceSipAgent VsaPrivileged VsaTap
 ## 呼叫路由
 
 网关以 **trunk** 而不是分机的身份接入 PBX，所有路由都在 PBX 的 Inbound/Outbound Routes 中管理。
+
+```mermaid
+flowchart TB
+    caller["蜂窝网络"] <-->|"SIM 0 / SIM 1"| tap
+    subgraph phone["Android 手机"]
+        tap["通话音频截取<br/>(Shizuku, uid 2000)"] <--> bridge["呼叫桥接"] <--> ua["SIP user agent<br/>(pjsua2)"]
+    end
+    ua <-->|"SIP trunk<br/>X-VSA-SIMSLOT, X-VSA-Dial"| pbx["PBX<br/>(Asterisk / FreePBX)"]
+    pbx <--> ext["分机、软电话、IVR"]
+```
+
+<p align="center">
+  <img src="docs/images/notification.png" width="360" alt="桥接通话期间的电话应用和网关通知"><br>
+  <sub>桥接期间，系统电话应用仍显示这通蜂窝通话（主叫号码已遮挡）；网关通知显示两侧均已接通。</sub>
+</p>
 
 - **蜂窝来电**：手机发送 `INVITE sip:<target>@<domain>`，`target` 是一个 DID（默认就是 trunk 的用户名），主叫号码放在
   `P-Asserted-Identity` 中。PBX 上的 Inbound Route 按 DID 把来电送到你想要的地方。

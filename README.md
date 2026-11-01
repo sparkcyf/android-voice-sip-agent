@@ -15,6 +15,19 @@ Privileged operations (call-audio interception, the Telecom companion override, 
 [Shizuku](https://shizuku.rikka.app/) running as the shell user (uid 2000) — **no root required**. This relies on
 hidden platform APIs, which is why the app won't be available on Google Play.
 
+<table>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <img src="docs/images/takeover-dual-sim.png" width="320" alt="Takeover settings with per-SIM switches"><br>
+      <sub>The takeover switch, per-SIM incoming takeover and the SIM for PBX calls</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <img src="docs/images/bridged-call.png" width="320" alt="Health indicators and an active bridged call"><br>
+      <sub>A cellular call bridged to the PBX, with the phone's own call audio muted</sub>
+    </td>
+  </tr>
+</table>
+
 > [!WARNING]
 > This is a hobby project built on undocumented Android behaviour. It may stop working with any OS update, may
 > drop or misroute calls, and is provided **as is, without warranty of any kind**. Read the
@@ -108,6 +121,8 @@ registration fails and is retried every 30 s.
 
 ### Gateway status and recovery
 
+<img src="docs/images/health.png" width="360" alt="Health section with every check passing">
+
 Check **Health** for setup or registration errors. With takeover on, use **Re-run setup** after granting
 Shizuku access, or **Reconnect SIP** to retry registration with saved credentials.
 
@@ -186,6 +201,22 @@ Phone numbers are logged with only their last two digits; call audio is never lo
 
 The gateway joins the PBX as a **trunk**, not an extension; all routing lives in the PBX's inbound/outbound
 routes.
+
+```mermaid
+flowchart TB
+    caller["Cellular network"] <-->|"SIM 0 / SIM 1"| tap
+    subgraph phone["Android phone"]
+        tap["Call audio tap<br/>(Shizuku, uid 2000)"] <--> bridge["Call bridge"] <--> ua["SIP user agent<br/>(pjsua2)"]
+    end
+    ua <-->|"SIP trunk<br/>X-VSA-SIMSLOT, X-VSA-Dial"| pbx["PBX<br/>(Asterisk / FreePBX)"]
+    pbx <--> ext["Extensions, softphones, IVR"]
+```
+
+<p align="center">
+  <img src="docs/images/notification.png" width="360" alt="Phone app and gateway notifications during a bridged call"><br>
+  <sub>During a bridged call the phone app still shows the cellular call (caller number redacted);
+  the gateway's notification shows both legs connected.</sub>
+</p>
 
 - **Cellular inbound**: the phone sends `INVITE sip:<target>@<domain>`, where `target` is a DID (by default the
   trunk's own user name), with the caller number in `P-Asserted-Identity`. An Inbound Route on the PBX sends the

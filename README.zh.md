@@ -106,6 +106,71 @@ Android 11 尚未测试。各厂商的隐藏 API 和音频 HAL 路由不同，�
 TLS 用 Android 系统 CA 库校验服务器证书链和主机名，仅支持 TLS 1.2/1.3，接受最左一级的 `*.` 通配证书（RFC 6125）。
 不做降级：TLS 失败就注册失败，每 30 s 重试。
 
+### 配置文件
+
+**Configuration file → Export to file** 把除 **Take over calls** 开关以外的全部设置导出为 JSON。
+**Import from file** 先列出会改变的设置，确认后才应用。只有文件中出现的 key 会被修改，例如文件里可以只写 SIP 账号。
+与 **Save & apply** 一样，导入的修改等待当前通话结束后生效。导入不会打开或关闭接管。
+
+> [!WARNING]
+> 导出的文件以明文保存 SIP 密码，请妥善保管。
+
+```json
+{
+  "format": "voice-sip-agent-config",
+  "version": 1,
+  "exportedBy": "Voice SIP Agent 0.4.0",
+  "sip": {
+    "stack": "pjsua2",
+    "server": "sip.example.org",
+    "port": 5061,
+    "transport": "tls",
+    "srtp": "optional",
+    "domain": "sip.example.org",
+    "user": "android-gw",
+    "password": "<secret>",
+    "localPort": 5062,
+    "holdWhenNotReady": true,
+    "debugLog": false
+  },
+  "routing": {
+    "target": "android-gw",
+    "prefixes": ["+1", "00"],
+    "busyPolicy": "reject",
+    "defaultSim": "system",
+    "inboundExcludedSlots": [1]
+  },
+  "device": {
+    "audioMethod": "auto",
+    "callAccess": "auto",
+    "muteEarpiece": true,
+    "keepDefaultDialer": false
+  }
+}
+```
+
+| Key | 取值 |
+|---|---|
+| `format`、`version` | 必填：`"voice-sip-agent-config"` 和 `1`。`exportedBy` 仅供参考。 |
+| `sip.stack` | `pjsua2` 或 `builtin` |
+| `sip.port`、`sip.localPort` | 1–65535；`localPort` 是自研栈的本地 UDP 端口 |
+| `sip.transport` / `sip.srtp` | `udp`、`tcp`、`tls` / `off`、`optional`、`mandatory` |
+| `sip.domain` | 留空表示使用 PBX 主机 |
+| `sip.holdWhenNotReady` | **Unregister while the phone cannot take calls** |
+| `sip.debugLog` | **pjsip debug log** |
+| `routing.target` | 蜂窝来电 → SIP 目标；留空表示 SIP 用户名 |
+| `routing.prefixes` | 允许拨出的前缀，字符串数组；`[]` 表示不限 |
+| `routing.busyPolicy` | `reject` 或 `ignore`（忙时把蜂窝来电留给手机） |
+| `routing.defaultSim` | 不带 `X-VSA-SIMSLOT` 时使用的 SIM：`"system"`、`"refuse"` 或卡槽号 |
+| `routing.inboundExcludedSlots` | 来电留给手机 App、不接管的卡槽 |
+| `device.audioMethod` | `auto`、`redirection` 或 `direct`（**Cellular audio**） |
+| `device.callAccess` | `auto`、`companion` 或 `dialer`（**Call access**） |
+| `device.muteEarpiece` | **Mute call audio on this phone** |
+| `device.keepDefaultDialer` | **Keep this app as the default phone app when gateway is off** |
+
+应用前会先校验整个文件：出现未知 key、类型错误、取值越界或更高的 `version` 时整份拒绝。
+错误信息只给出 key，不包含它的值。`device` 一节与机型和卡槽有关，导入其他手机导出的文件前请先检查这一节。
+
 ### 网关状态与恢复
 
 <img src="docs/images/health.png" width="360" alt="各项检查均通过的 Health 区">
@@ -152,6 +217,21 @@ adb shell am broadcast -n $R --es op provision --ez hold_sip false   # 未就绪
 adb shell am broadcast -n $R --es op provision --ei audio_method 2   # 0 Automatic，1 Call redirection，2 Direct telephony
 adb logcat -s VoiceSipAgent VsaPrivileged VsaTap
 ```
+
+需要一次传输多项设置时，可使用[配置文件](#配置文件)。不带 `--es path` 时，导出和导入都使用
+App 外部文件目录中的 `voice-sip-agent-config.json`，adb 可以直接读写：
+
+```bash
+F=/sdcard/Android/data/io.github.sparkcyf.voicesipagent/files/voice-sip-agent-config.json
+adb shell am broadcast -n $R --es op export    # 写入 $F；广播回复不含密码
+adb pull $F
+adb push voice-sip-agent-config.json $F
+adb shell am broadcast -n $R --es op import    # 回复导入的设置项数量
+adb shell am broadcast -n $R --es op import --es path /data/local/tmp/vsa.json   # 任何 App 可读的绝对路径
+```
+
+受 scoped storage 限制，App 读不到 adb 推送到共享存储（如 `/sdcard/Download`）的文件，但可以在那里新建文件。
+App 私有存储内的路径会被拒绝。在 Android 17 的 Pixel 上，`/data/local/tmp` 可读、不可写。
 
 广播结果：`result=1` 表示确认接收，`2` 表示错误，`3` 表示等待 5 秒后超时。
 确认接收不代表操作已完成；变更可能等待当前通话结束后应用。重试前请查看 logcat 或 App 内日志。

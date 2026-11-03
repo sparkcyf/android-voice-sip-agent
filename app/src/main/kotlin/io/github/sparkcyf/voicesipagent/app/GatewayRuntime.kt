@@ -930,6 +930,11 @@ class GatewayRuntime private constructor(context: Context) {
         settingsStore.save(new)
         _settings.value = new
         AppLog.i("settings saved ($new)")
+        if (new.muteEarpiece != old.muteEarpiece) {
+            // As with the toggle (an imported file can change it): changing the setting retests the device.
+            settingsStore.setDirectMuteIncompatible(false)
+            _directMuteIncompatible.value = false
+        }
         val platformOnly = old.copy(audioMethod = new.audioMethod, callAccess = new.callAccess,
             muteEarpiece = new.muteEarpiece, sipDebugLog = new.sipDebugLog,
             keepDefaultDialer = new.keepDefaultDialer, holdSipWhenNotReady = new.holdSipWhenNotReady,
@@ -1067,6 +1072,9 @@ class GatewayRuntime private constructor(context: Context) {
             " inbound_off=${inboundOffLabel(settings)}" +
             " calls=${h.calls.summary}" + (if (h.settingsPending) " settingsPending" else "")
     }
+
+    /** Saved settings including edits queued until calls end, as [settingsLine] reports them. */
+    fun savedSettings(): GatewaySettings = pendingSettings ?: settings
 
     /** Saved or queued selections (not a verified audio route), never the password itself. */
     fun settingsLine(): String {

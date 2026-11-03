@@ -2,7 +2,9 @@ package io.github.sparkcyf.voicesipagent.app
 
 import android.os.Bundle
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -30,6 +33,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -38,11 +42,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -57,6 +64,9 @@ import io.github.sparkcyf.voicesipagent.privileged.CallAccess
 import io.github.sparkcyf.voicesipagent.privileged.CallAudioStatus
 import io.github.sparkcyf.voicesipagent.privileged.ShizukuConnector
 import io.github.sparkcyf.voicesipagent.telephony.DefaultSim
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : DialerRoleActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -220,6 +230,7 @@ private fun Screen(rt: GatewayRuntime, editor: SipSettingsDraft, modifier: Modif
             }
         }
         SettingsSection(rt, editor)
+        ConfigFileSection(rt)
         var advanced by rememberSaveable { mutableStateOf(false) }
         OutlinedButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Hide advanced settings" else "Advanced settings") }
         if (advanced) {
@@ -346,6 +357,68 @@ private fun SettingsSection(rt: GatewayRuntime, editor: SipSettingsDraft) = with
         Toggle("pjsip debug log", cur.sipDebugLog, { rt.setSipDebugLog(it) }) {
             "Info-level logs with masked numbers"
         }
+    }
+}
+
+@Composable
+private fun ConfigFileSection(rt: GatewayRuntime) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var message by rememberSaveable { mutableStateOf("") }
+    var preview by remember { mutableStateOf<Pair<ConfigFile.Import, List<String>>?>(null) }
+    val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val text = ConfigFile.export(rt.savedSettings(), ConfigFile.exportedBy(context))
+        scope.launch {
+            message = withContext(Dispatchers.IO) {
+                runCatching { context.contentResolver.openOutputStream(uri, "w")!!.use { it.write(text.toByteArray()) } }
+            }.fold({ "Settings exported." }, { "Export failed: ${it.message ?: it.javaClass.simpleName}" })
+        }
+    }
+    val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching { context.contentResolver.openInputStream(uri)!!.use { ConfigFile.parse(ConfigFile.read(it)) } }
+            }.fold({ import ->
+                val current = rt.savedSettings()
+                val changes = ConfigFile.changes(current, import.applyTo(current))
+                if (changes.isEmpty()) message = "The file matches the current settings." else preview = import to changes
+            }, { message = "Import failed: ${it.message ?: it.javaClass.simpleName}" })
+        }
+    }
+    preview?.let { (import, changes) ->
+        AlertDialog(
+            onDismissRequest = { preview = null },
+            title = { Text("Import settings?") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("${changes.size} of the ${import.keys.size} settings in the file ${if (changes.size == 1) "differs" else "differ"}:")
+                    changes.forEach { Text(it, fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 15.sp) }
+                    Text("Takeover stays as it is. Changes wait for current calls to end.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    rt.applySettings(import::applyTo)
+                    message = "Imported ${changes.size} changed setting${if (changes.size == 1) "" else "s"}."
+                    preview = null
+                }) { Text("Import") }
+            },
+            dismissButton = { TextButton(onClick = { preview = null }) { Text("Cancel") } },
+        )
+    }
+    Section("Configuration file") {
+        Text("Export saves every setting except the takeover switch as JSON, including the SIP password in plain text. " +
+            "Import changes only the settings present in the file.", style = MaterialTheme.typography.bodySmall)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { exporter.launch(ConfigFile.DEFAULT_NAME) }) { Text("Export to file") }
+            OutlinedButton(onClick = { importer.launch(arrayOf("application/json", "text/*", "application/octet-stream")) }) {
+                Text("Import from file")
+            }
+        }
+        if (message.isNotEmpty()) Text(message, style = MaterialTheme.typography.bodySmall)
     }
 }
 

@@ -8,6 +8,8 @@ import android.os.Looper
 import io.github.sparkcyf.voicesipagent.pjsua2.SipTransport
 import io.github.sparkcyf.voicesipagent.pjsua2.SrtpPolicy
 import io.github.sparkcyf.voicesipagent.telephony.DefaultSim
+import java.io.File
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -23,13 +25,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  *   ... --es op provision --ei audio_method 2      (0 auto, 1 redirection, 2 direct)
  *   ... --es op sip-debug --ez on true      (pjsip info-level logs; off by default)
  *   ... --es op provision --ez hold_sip false  (keep SIP registered while the cellular side is not ready)
+ *   ... --es op export | import [--es path /sdcard/Android/data/<package>/files/voice-sip-agent-config.json]
+ *       (the JSON settings file, see [ConfigFile]; the path defaults to that file in the app's external files dir)
  *
  * Every op acknowledges submission with an observed runtime snapshot, e.g.
  *   Broadcast completed: result=1, data="ok: ready=true (Gateway ready) takeover=on sip=ready ..."
  * [RESULT_OK] = 1, [RESULT_ERROR] = 2 (bad input or submission/reporting failure),
  * [RESULT_TIMEOUT] = 3 (queued or running; see logcat). An acknowledgement does not guarantee completion.
  * result=0 with no data means the broadcast never reached this receiver (e.g. a misspelled component).
- * Replies never contain the SIP password.
+ * Replies never contain the SIP password; an exported file does.
  */
 class AdbControlReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -39,7 +43,7 @@ class AdbControlReceiver : BroadcastReceiver() {
         val submit: (GatewayRuntime) -> (() -> String)
         try {
             op = intent.argument<String>("op") ?: invalid("missing --es op")
-            submit = parseCommand(intent, op)
+            submit = parseCommand(context, intent, op)
         } catch (e: InvalidArgument) {
             reply.send(RESULT_ERROR, "error: ${e.message}")
             return
@@ -53,7 +57,10 @@ class AdbControlReceiver : BroadcastReceiver() {
             val describe = submit(rt)
             AppLog.i("adb control: accepted $op")
             rt.afterQueued {
-                val data = try { describe() } catch (_: Exception) {
+                val data = try { describe() } catch (e: CommandFailed) {
+                    reply.send(RESULT_ERROR, "error: ${e.message}")
+                    return@afterQueued
+                } catch (_: Exception) {
                     reply.send(RESULT_ERROR, "error: could not read command state; check logs before retrying")
                     return@afterQueued
                 }
@@ -66,7 +73,7 @@ class AdbControlReceiver : BroadcastReceiver() {
     }
 
     /** Validate and capture extras before submitting anything; merge settings on the runtime worker. */
-    private fun parseCommand(intent: Intent, op: String): (GatewayRuntime) -> (() -> String) {
+    private fun parseCommand(context: Context, intent: Intent, op: String): (GatewayRuntime) -> (() -> String) {
         val allowed = when (op) {
             "status", "setup", "sip-restart" -> emptySet()
             "loopback", "takeover", "earpiece-mute", "sip-debug" -> setOf("on")
@@ -75,6 +82,7 @@ class AdbControlReceiver : BroadcastReceiver() {
             "sim-inbound" -> setOf("slot", "on")
             "provision" -> setOf("server", "port", "transport", "srtp", "user", "password", "domain",
                 "target", "prefixes", "audio_method", "call_access", "hold_sip")
+            "import", "export" -> setOf("path")
             else -> invalid("unknown op; see README adb control")
         }
         if (!intent.extras?.keySet().orEmpty().all { it == "op" || it in allowed })
@@ -163,8 +171,61 @@ class AdbControlReceiver : BroadcastReceiver() {
                 }
                 action
             }
+            "import" -> {
+                val path = intent.argument<String>("path")
+                val file = configFile(context, path)
+                val hint = if (path != null) DEFAULT_PATH_HINT else ""
+                val import = try {
+                    file.inputStream().use { ConfigFile.parse(ConfigFile.read(it)) }
+                } catch (e: ConfigFile.Invalid) {
+                    invalid("${file.path}: ${e.message}")
+                } catch (e: IOException) {
+                    invalid("cannot read ${file.path}: ${e.message}$hint")
+                }
+                val action: (GatewayRuntime) -> (() -> String) = { rt ->
+                    rt.applySettings(import::applyTo)
+                    AppLog.i("importing ${import.keys.size} settings from ${file.path}")
+                    val describe = { "imported ${import.keys.size} settings; ${rt.settingsLine()}" }
+                    describe
+                }
+                action
+            }
+            "export" -> {
+                val path = intent.argument<String>("path")
+                val file = configFile(context, path)
+                val hint = if (path != null) DEFAULT_PATH_HINT else ""
+                val exportedBy = ConfigFile.exportedBy(context)
+                // Written on the runtime thread after every queued change, like the other replies' snapshots.
+                val action: (GatewayRuntime) -> (() -> String) = { rt ->
+                    {
+                        try {
+                            file.writeText(ConfigFile.export(rt.savedSettings(), exportedBy))
+                        } catch (e: IOException) {
+                            throw CommandFailed("cannot write ${file.path}: ${e.message}$hint")
+                        }
+                        "exported to ${file.path}"
+                    }
+                }
+                action
+            }
             else -> error("unreachable")
         }
+    }
+
+    /**
+     * An absolute path, or the default file in the app's external files dir (created here, so adb can push
+     * into it). Only the shell can send these commands; never let them reach app-private storage.
+     */
+    private fun configFile(context: Context, path: String?): File {
+        val externalDir = context.getExternalFilesDir(null)
+        val file = when {
+            path == null -> File(externalDir ?: invalid("app external storage unavailable; pass --es path"), ConfigFile.DEFAULT_NAME)
+            File(path).isAbsolute -> File(path)
+            else -> invalid("path must be absolute")
+        }.canonicalFile
+        val private = listOfNotNull(context.dataDir, context.createDeviceProtectedStorageContext()?.dataDir)
+        if (private.any { file.startsWith(it.canonicalFile) }) invalid("path must be outside the app's private storage")
+        return file
     }
 
     @Suppress("DEPRECATION") // Inspect types rather than letting Intent silently return defaults.
@@ -182,6 +243,8 @@ class AdbControlReceiver : BroadcastReceiver() {
     }
 
     private class InvalidArgument(message: String) : IllegalArgumentException(message)
+    /** A reply-time failure whose message is safe to return. */
+    private class CommandFailed(message: String) : Exception(message)
     private fun invalid(message: String): Nothing = throw InvalidArgument(message)
 
     /** Completes the pending broadcast exactly once, whichever of reply and timeout comes first. */
@@ -216,5 +279,7 @@ class AdbControlReceiver : BroadcastReceiver() {
         const val RESULT_TIMEOUT = 3
         /** Well under the 10 s foreground-broadcast limit. */
         private const val TIMEOUT_MS = 5_000L
+        /** Scoped storage hides most shared-storage files from the app; its own external files dir always works. */
+        private const val DEFAULT_PATH_HINT = "; omit --es path to use the app's external files dir"
     }
 }

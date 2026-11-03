@@ -63,7 +63,13 @@ adb shell am broadcast -n $R --es op provision --es transport tls --es srtp opti
 adb shell am broadcast -n $R --es op provision --ei audio_method 2   # 0 auto, 1 redirection, 2 direct; --ei call_access 0|1|2
 adb shell am broadcast -n $R --es op sip-debug --ez on true   # pjsip info-level logging, off by default (persisted)
 adb shell "am broadcast -n $R --es op provision --es prefixes ''"   # empty string args need an extra layer of quotes, or am says "Argument expected"
+adb shell am broadcast -n $R --es op export | import [--es path <absolute path>]   # JSON settings file (README "Configuration file")
 ```
+
+`export`/`import` default to `voice-sip-agent-config.json` in the app's external files dir
+(`/sdcard/Android/data/io.github.sparkcyf.voicesipagent/files/`), which `adb push`/`adb pull` can reach.
+Scoped storage hides adb-pushed files in shared storage such as `/sdcard/Download` from the app. Paths in its
+private storage are refused. The exported file holds the SIP password in plain text; the reply never does.
 
 `:sip:sipProbe` (`-PprobeArgs="echo *43 40"` / `"listen 60"`) registers against the PBX described in the
 git-ignored `sip_secret` and runs a live call test. Do not point it at the gateway's own trunk account: with
@@ -233,6 +239,9 @@ Module dependencies: `:voice-api` ← `:sip`, `:gateway` (pure JVM, testable on 
   companion mode is selected, and call access is unavailable. The override alone does not gate readiness;
   health checks never request the dialer role.
   Settings live in SharedPreferences; the SIP password is sealed with a Keystore AES-GCM key.
+  `ConfigFile` exports every setting except takeover as versioned JSON, with the password in plain text.
+  Import overlays only the keys present and applies them through `applySettings`, after validating the whole file.
+  Unknown keys, wrong types and newer versions reject the file; errors name keys, never values.
   Takeover-off cancels health/dialer polling, unregisters network monitoring, and removes
   this app's Shizuku listeners and UserService after explicit handoff cleanup. Saved-off startup
   starts none of those resources. The standard runtime executor releases its thread after one idle

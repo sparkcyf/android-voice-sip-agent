@@ -74,4 +74,5 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
     testImplementation(libs.mockito.core)
+    testImplementation(libs.android.json)
 }

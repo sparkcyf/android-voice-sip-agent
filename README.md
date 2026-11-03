@@ -119,6 +119,73 @@ TLS validates the server certificate chain and host name against the Android sys
 and accepts `*.` wildcard certificates in the left-most label (RFC 6125). There is no downgrade: if TLS fails,
 registration fails and is retried every 30 s.
 
+### Configuration file
+
+**Configuration file → Export to file** saves every setting as JSON, except the **Take over calls** switch.
+**Import from file** lists the settings that would change and applies them after you confirm. Only keys
+present in the file are changed, so a file can hold just the SIP account, for example. Like **Save & apply**,
+imported changes wait for current calls to end. Import never turns takeover on or off.
+
+> [!WARNING]
+> The exported file contains the SIP password in plain text. Keep it private.
+
+```json
+{
+  "format": "voice-sip-agent-config",
+  "version": 1,
+  "exportedBy": "Voice SIP Agent 0.4.0",
+  "sip": {
+    "stack": "pjsua2",
+    "server": "sip.example.org",
+    "port": 5061,
+    "transport": "tls",
+    "srtp": "optional",
+    "domain": "sip.example.org",
+    "user": "android-gw",
+    "password": "<secret>",
+    "localPort": 5062,
+    "holdWhenNotReady": true,
+    "debugLog": false
+  },
+  "routing": {
+    "target": "android-gw",
+    "prefixes": ["+1", "00"],
+    "busyPolicy": "reject",
+    "defaultSim": "system",
+    "inboundExcludedSlots": [1]
+  },
+  "device": {
+    "audioMethod": "auto",
+    "callAccess": "auto",
+    "muteEarpiece": true,
+    "keepDefaultDialer": false
+  }
+}
+```
+
+| Key | Values |
+|---|---|
+| `format`, `version` | Required: `"voice-sip-agent-config"` and `1`. `exportedBy` is informational. |
+| `sip.stack` | `pjsua2` or `builtin` |
+| `sip.port`, `sip.localPort` | 1–65535; `localPort` is the built-in stack's local UDP port |
+| `sip.transport` / `sip.srtp` | `udp`, `tcp`, `tls` / `off`, `optional`, `mandatory` |
+| `sip.domain` | Empty = the PBX host |
+| `sip.holdWhenNotReady` | **Unregister while the phone cannot take calls** |
+| `sip.debugLog` | **pjsip debug log** |
+| `routing.target` | Cellular inbound → SIP target; empty = the SIP user name |
+| `routing.prefixes` | Allowed dial-out prefixes as an array of strings; `[]` = any number |
+| `routing.busyPolicy` | `reject` or `ignore` (leave incoming cellular calls to the phone while busy) |
+| `routing.defaultSim` | SIM used without `X-VSA-SIMSLOT`: `"system"`, `"refuse"` or a slot number |
+| `routing.inboundExcludedSlots` | SIM slots whose incoming calls are left to the phone app |
+| `device.audioMethod` | `auto`, `redirection` or `direct` (**Cellular audio**) |
+| `device.callAccess` | `auto`, `companion` or `dialer` (**Call access**) |
+| `device.muteEarpiece` | **Mute call audio on this phone** |
+| `device.keepDefaultDialer` | **Keep this app as the default phone app when gateway is off** |
+
+The whole file is checked before anything changes. An unknown key, a wrong type, an out-of-range value or a newer
+`version` rejects the file. The error names the key but never its value. The `device` section depends on the phone
+model and its SIM slots, so review it before importing a file exported on another phone.
+
 ### Gateway status and recovery
 
 <img src="docs/images/health.png" width="360" alt="Health section with every check passing">
@@ -166,6 +233,22 @@ adb shell am broadcast -n $R --es op provision --ez hold_sip false   # stay regi
 adb shell am broadcast -n $R --es op provision --ei audio_method 2   # 0 Automatic, 1 Call redirection, 2 Direct telephony
 adb logcat -s VoiceSipAgent VsaPrivileged VsaTap
 ```
+
+Use a [configuration file](#configuration-file) to transfer many settings at once. Without `--es path`, export
+and import use `voice-sip-agent-config.json` in the app's external files directory, which adb can read and write:
+
+```bash
+F=/sdcard/Android/data/io.github.sparkcyf.voicesipagent/files/voice-sip-agent-config.json
+adb shell am broadcast -n $R --es op export    # writes $F; the reply never contains the password
+adb pull $F
+adb push voice-sip-agent-config.json $F
+adb shell am broadcast -n $R --es op import    # replies with the number of settings imported
+adb shell am broadcast -n $R --es op import --es path /data/local/tmp/vsa.json   # any absolute path the app can read
+```
+
+With scoped storage, the app cannot read files that adb pushes to shared storage such as `/sdcard/Download`.
+It can write new files there. Paths inside the app's private storage are refused.
+`/data/local/tmp` was readable, but not writable, on a Pixel running Android 17.
 
 Replies use `result=1` for acknowledgement, `2` for errors, and `3` for a five-second timeout.
 Acknowledgement does not guarantee completion; changes may wait until calls end. Check logcat or the

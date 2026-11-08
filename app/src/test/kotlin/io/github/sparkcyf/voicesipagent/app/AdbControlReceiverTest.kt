@@ -19,7 +19,7 @@ class AdbControlReceiverTest {
         doAnswer { update = it.getArgument(0); null }.`when`(f.runtime).applySettings(any() ?: { it })
         val args = mutableMapOf<String, Any>("op" to "provision", "server" to "new.invalid",
             "password" to "test-secret", "target" to "", "transport" to "TLS", "srtp" to "MANDATORY",
-            "port" to 5061, "audio_method" to 2, "call_access" to 1, "hold_sip" to false)
+            "port" to 5061, "audio_method" to 2, "call_access" to 1, "hold_sip" to false, "tls_verify" to false)
         f.receive(args)
         verify(f.pending, never()).finish()
 
@@ -30,7 +30,7 @@ class AdbControlReceiverTest {
             inboundTarget = "old-target", allowedPrefixes = "123", sipDebugLog = true)
         assertEquals(current.copy(server = "new.invalid", password = "test-secret", inboundTarget = "",
             sipTransport = "tls", srtp = "mandatory", port = 5061, audioMethod = 2, callAccess = 1,
-            holdSipWhenNotReady = false), update!!(current))
+            holdSipWhenNotReady = false, tlsVerify = false), update!!(current))
 
         f.drain()
         verify(f.pending).setResult(1, "ok: settings snapshot", null)
@@ -46,6 +46,7 @@ class AdbControlReceiverTest {
             mapOf("call_access" to -1), mapOf("call_access" to 3),
             mapOf("password" to 123),
             mapOf("hold_sip" to "false"), mapOf("passwrod" to "test-secret"),
+            mapOf("tls_verify" to "false"), mapOf("tls_ca" to 1), mapOf("tls_ca" to "test-secret"),
         )
         val invalid = invalidProvisionArgs.map {
             mapOf("op" to "provision", "password" to "test-secret") + it
@@ -156,6 +157,19 @@ class AdbControlReceiverTest {
         assertFalse(AppLog.tail.value.any { it.contains("test-secret") })
     }
 
+    @Test fun provisionTlsCaReadsCertificateFileOrResetsToSystem(): Unit = Fixture().use { f ->
+        var update: ((GatewaySettings) -> GatewaySettings)? = null
+        doAnswer { update = it.getArgument(0); null }.`when`(f.runtime).applySettings(any() ?: { it })
+        val file = File(f.external, "pbx.pem").apply { writeText("pbx\n" + TEST_CERT_PEM) }
+        f.receive(mapOf("op" to "provision", "tls_ca" to file.path))
+        // Read once, at dispatch.
+        file.delete()
+        assertEquals(GatewaySettings(tlsCa = TEST_CERT_PEM), update!!(GatewaySettings()))
+
+        f.receive(mapOf("op" to "provision", "tls_ca" to "system"))
+        assertEquals(GatewaySettings(), update!!(GatewaySettings(tlsCa = TEST_CERT_PEM)))
+    }
+
     @Test fun badPathsAndFilesAreRejectedBeforeRuntimeMutation(): Unit = Fixture().use { f ->
         val bad = File(f.external, "bad.json").apply { writeText("""{"format":"voice-sip-agent-config","version":1,"sip":{"port":"test-secret"}}""") }
         val private = File(f.data, "shared_prefs/gateway.json")
@@ -167,6 +181,9 @@ class AdbControlReceiverTest {
             mapOf("op" to "export", "path" to "${f.external}/../${f.data.name}/x.json") to "outside the app's private storage",
             mapOf("op" to "export", "path" to 1) to "path must use --es",
             mapOf("op" to "export", "file" to "x") to "unexpected argument",
+            mapOf("op" to "provision", "tls_ca" to bad.path) to "not an X.509 certificate",
+            mapOf("op" to "provision", "tls_ca" to "${f.external}/missing.pem") to "cannot read",
+            mapOf("op" to "provision", "tls_ca" to private.path) to "outside the app's private storage",
         )
         for ((args, expected) in cases) {
             clearInvocations(f.pending)

@@ -13,6 +13,7 @@ class ConfigFileTest {
     private val full = GatewaySettings(
         takeover = false, keepDefaultDialer = true, muteEarpiece = false,
         server = "sip.example.org", port = 5061, sipTransport = "tls", srtp = "mandatory",
+        tlsVerify = false, tlsCa = TEST_CERT_PEM,
         sipDebugLog = true, holdSipWhenNotReady = false, username = "android-gw", password = "test-secret",
         domain = "example.org", localSipPort = 5070, inboundTarget = "302", allowedPrefixes = "+1,00",
         busyPolicy = BusyPolicy.IGNORE, audioMethod = AudioMethod.LEGACY, callAccess = CallAccess.DIALER,
@@ -31,7 +32,7 @@ class ConfigFileTest {
         assertFalse(text.contains("takeover"))
 
         val imported = ConfigFile.parse(text)
-        assertEquals(20, imported.keys.size)
+        assertEquals(22, imported.keys.size)
         // Takeover is the only setting the file leaves alone.
         assertEquals(full.copy(takeover = true), imported.applyTo(GatewaySettings(takeover = true)))
     }
@@ -43,6 +44,23 @@ class ConfigFileTest {
         assertEquals("reject", routing.getString("busyPolicy"))
         val refuse = JSONObject(ConfigFile.export(GatewaySettings(defaultSimSlot = DefaultSim.REFUSE)))
         assertEquals("refuse", refuse.getJSONObject("routing").getString("defaultSim"))
+    }
+
+    @Test fun tlsCertificatesAreValidatedNormalizedAndSummarized() {
+        fun parse(tlsCa: String) = ConfigFile.parse(
+            JSONObject().put("format", "voice-sip-agent-config").put("version", 1)
+                .put("sip", JSONObject().put("tlsCa", tlsCa)).toString())
+        // Windows line endings and text around the block are accepted; the stored form is canonical.
+        val imported = parse("pbx certificate\r\n" + TEST_CERT_PEM.replace("\n", "\r\n"))
+        assertEquals(GatewaySettings(tlsCa = TEST_CERT_PEM), imported.applyTo(GatewaySettings()))
+        assertEquals(GatewaySettings(), parse("").applyTo(GatewaySettings(tlsCa = TEST_CERT_PEM)))
+
+        val e = assertThrows(ConfigFile.Invalid::class.java) { parse("-----BEGIN CERTIFICATE-----\ntest-secret\n-----END CERTIFICATE-----") }
+        assertTrue(e.message!!.startsWith("sip.tlsCa must be"))
+        assertFalse(e.message!!.contains("test-secret"))
+
+        assertEquals(listOf("sip.tlsVerify: true → false", "sip.tlsCa: system CAs → 1 certificate (CN=pbx.test)"),
+            ConfigFile.changes(GatewaySettings(), GatewaySettings(tlsVerify = false, tlsCa = TEST_CERT_PEM)))
     }
 
     @Test fun importOverlaysOnlyPresentKeys() {

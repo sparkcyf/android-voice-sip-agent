@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelProvider
 import io.github.sparkcyf.voicesipagent.pjsua2.SipTransport
 import io.github.sparkcyf.voicesipagent.pjsua2.SrtpPolicy
+import io.github.sparkcyf.voicesipagent.pjsua2.TlsCertificates
 import io.github.sparkcyf.voicesipagent.privileged.HealthKeys
 import io.github.sparkcyf.voicesipagent.privileged.AudioMethod
 import io.github.sparkcyf.voicesipagent.privileged.CallAccess
@@ -329,6 +330,7 @@ private fun SettingsSection(rt: GatewayRuntime, editor: SipSettingsDraft) = with
         Choice("SRTP (TLS only)", SrtpPolicy.entries, srtp, { it.id }, enabled = { !builtin && transport == SipTransport.TLS }) {
             srtp = it
         }
+        TlsCertificateSettings(editor, enabled = !builtin && transport == SipTransport.TLS)
         Field("PBX host", server) { server = it }
         Field("PBX port", port, KeyboardType.Number, error = portValidationError) { port = it }
         Field("SIP domain (empty = PBX host)", domain) { domain = it }
@@ -358,6 +360,55 @@ private fun SettingsSection(rt: GatewayRuntime, editor: SipSettingsDraft) = with
             "Info-level logs with masked numbers"
         }
     }
+}
+
+/** Edits the draft only; Save & apply restarts pjsua2 when the certificate policy changes. */
+@Composable
+private fun TlsCertificateSettings(editor: SipSettingsDraft, enabled: Boolean) = with(editor) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var message by rememberSaveable { mutableStateOf("") }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)!!.use { TlsCertificates.normalize(TlsCertificates.read(it)) }
+                }
+            }.fold({ tlsCa = it; message = "" }, { message = "Import failed: ${it.message ?: it.javaClass.simpleName}" })
+        }
+    }
+    val dim = if (enabled) 1f else 0.38f
+    Toggle("Verify TLS certificate", tlsVerify, { tlsVerify = it }, enabled = enabled) {
+        if (tlsVerify) "Checks the certificate chain, expiry and host name."
+        else "Any certificate is accepted, including expired, self-signed and wrong-host ones."
+    }
+    if (enabled && !tlsVerify) {
+        Text("Insecure: anyone on the network path can impersonate the PBX, read and change SIP signalling " +
+            "and read the SRTP keys. Use only for testing or on a trusted network.",
+            color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+    }
+    Text("Trusted certificates (TLS)", style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = dim))
+    val certs = remember(tlsCa) { runCatching { TlsCertificates.certificates(tlsCa) }.getOrDefault(emptyList()) }
+    if (tlsCa.isEmpty()) {
+        Text("Android system CAs", color = MaterialTheme.colorScheme.onSurface.copy(alpha = dim))
+    } else {
+        Text("Only these, instead of the system CAs:", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = dim))
+        certs.forEach {
+            Text(TlsCertificates.describe(it), fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = dim))
+        }
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = { picker.launch(arrayOf("*/*")) }, enabled = enabled) { Text("Import certificate") }
+        if (tlsCa.isNotEmpty()) OutlinedButton(onClick = { tlsCa = "" }, enabled = enabled) { Text("Use system CAs") }
+    }
+    Text("A private CA, or the PBX's own self-signed certificate (PEM or DER). The host name must still match " +
+        "unless verification is off.", style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = dim))
+    if (message.isNotEmpty()) Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable

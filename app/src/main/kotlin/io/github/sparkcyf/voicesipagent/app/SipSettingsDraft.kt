@@ -19,6 +19,9 @@ class SipSettingsDraft : ViewModel() {
     var stack by mutableStateOf(SipStack.PJSUA2)
     var transport by mutableStateOf(SipTransport.UDP)
     var srtp by mutableStateOf(SrtpPolicy.OPTIONAL)
+    var tlsVerify by mutableStateOf(true)
+    /** Normalized PEM bundle; empty = Android system CAs. */
+    var tlsCa by mutableStateOf("")
     private var saved: GatewaySettings? = null
 
     private val validatedPort: Int?
@@ -43,6 +46,8 @@ class SipSettingsDraft : ViewModel() {
             transport = SipTransport.of(current.sipTransport) ?: SipTransport.UDP
         if (previous == null || srtp == (SrtpPolicy.of(previous.srtp) ?: SrtpPolicy.OPTIONAL))
             srtp = SrtpPolicy.of(current.srtp) ?: SrtpPolicy.OPTIONAL
+        if (previous == null || tlsVerify == previous.tlsVerify) tlsVerify = current.tlsVerify
+        if (previous == null || tlsCa == previous.tlsCa) tlsCa = current.tlsCa
         saved = current
     }
 
@@ -53,6 +58,7 @@ class SipSettingsDraft : ViewModel() {
         server = server, port = requireNotNull(validatedPort) { "PBX port must be between 1 and 65535." },
         username = user, password = password, inboundTarget = target, allowedPrefixes = prefixes,
         domain = domain, sipStack = stack, sipTransport = transport.id, srtp = srtp.id,
+        tlsVerify = tlsVerify, tlsCa = tlsCa,
     )
 
     /** Capture the form at the click, before the runtime queues or applies it on another thread. */
@@ -62,6 +68,7 @@ class SipSettingsDraft : ViewModel() {
             server = snapshot.server, port = snapshot.port, username = snapshot.username, password = snapshot.password,
             inboundTarget = snapshot.inboundTarget, allowedPrefixes = snapshot.allowedPrefixes, domain = snapshot.domain,
             sipStack = snapshot.sipStack, sipTransport = snapshot.sipTransport, srtp = snapshot.srtp,
+            tlsVerify = snapshot.tlsVerify, tlsCa = snapshot.tlsCa,
         ) }
     }
 }
@@ -70,4 +77,5 @@ class SipSettingsDraft : ViewModel() {
 internal fun GatewaySettings.hasSameSipSettings(other: GatewaySettings): Boolean =
     server == other.server && port == other.port && username == other.username && password == other.password &&
         inboundTarget == other.inboundTarget && allowedPrefixes == other.allowedPrefixes && domain == other.domain &&
-        sipStack == other.sipStack && sipTransport == other.sipTransport && srtp == other.srtp
+        sipStack == other.sipStack && sipTransport == other.sipTransport && srtp == other.srtp &&
+        tlsVerify == other.tlsVerify && tlsCa == other.tlsCa

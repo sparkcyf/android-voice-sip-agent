@@ -183,7 +183,10 @@ class PjsipEndpoint(
         if (config.transport != SipTransport.TLS && config.srtp != SrtpPolicy.OFF) {
             log.info("SRTP ${config.srtp.id} ignored: needs TLS signalling, using plain RTP")
         }
-        val tid = PjsuaLib.transport(config.transport, config.localPort)
+        if (config.transport == SipTransport.TLS && !config.tls.verifyServer && config.srtp != SrtpPolicy.OFF) {
+            log.warn("SRTP keys travel over a TLS connection whose certificate is not verified")
+        }
+        val tid = PjsuaLib.transport(config.transport, config.localPort, config.tls)
         val ac = AccountConfig()
         ac.idUri = aor
         ac.regConfig.apply {

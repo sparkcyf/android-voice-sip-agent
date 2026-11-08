@@ -4,6 +4,7 @@ import android.content.Context
 import io.github.sparkcyf.voicesipagent.gateway.BusyPolicy
 import io.github.sparkcyf.voicesipagent.pjsua2.SipTransport
 import io.github.sparkcyf.voicesipagent.pjsua2.SrtpPolicy
+import io.github.sparkcyf.voicesipagent.pjsua2.TlsCertificates
 import io.github.sparkcyf.voicesipagent.privileged.AudioMethod
 import io.github.sparkcyf.voicesipagent.privileged.CallAccess
 import io.github.sparkcyf.voicesipagent.telephony.DefaultSim
@@ -114,6 +115,8 @@ object ConfigFile {
         /** null when the JSON value is not acceptable. */
         val fromJson: (Any?) -> T?,
         val secret: Boolean = false,
+        /** How [changes] shows a value; defaults to its JSON form. */
+        val display: ((T) -> String)? = null,
     ) {
         fun export(s: GatewaySettings) = toJson(get(s))
 
@@ -122,7 +125,7 @@ object ConfigFile {
             return { it.set(v) }
         }
 
-        fun show(s: GatewaySettings): String = when (val v = export(s)) {
+        fun show(s: GatewaySettings): String = display?.invoke(get(s)) ?: when (val v = export(s)) {
             is String -> JSONObject.quote(v)
             else -> v.toString()
         }
@@ -155,6 +158,13 @@ object ConfigFile {
             port("port", { it.port }, { copy(port = it) }),
             choice("transport", { it.sipTransport }, { copy(sipTransport = it) }, ids(*SipTransport.entries.map { it.id }.toTypedArray())),
             choice("srtp", { it.srtp }, { copy(srtp = it) }, ids(*SrtpPolicy.entries.map { it.id }.toTypedArray())),
+            bool("tlsVerify", { it.tlsVerify }, { copy(tlsVerify = it) }),
+            Field("tlsCa", { it.tlsCa }, { copy(tlsCa = it) },
+                "PEM certificates as a string, or \"\" for the Android system CAs",
+                fromJson = { value ->
+                    (value as? String)?.let { if (it.isBlank()) "" else runCatching { TlsCertificates.normalize(it) }.getOrNull() }
+                },
+                display = TlsCertificates::label),
             string("domain", { it.domain }, { copy(domain = it) }),
             string("user", { it.username }, { copy(username = it) }),
             string("password", { it.password }, { copy(password = it) }, secret = true),

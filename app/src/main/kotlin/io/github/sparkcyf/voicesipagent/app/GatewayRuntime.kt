@@ -27,6 +27,8 @@ import io.github.sparkcyf.voicesipagent.pjsua2.PjsipEndpoint
 import io.github.sparkcyf.voicesipagent.pjsua2.PjsipLog
 import io.github.sparkcyf.voicesipagent.pjsua2.SipTransport
 import io.github.sparkcyf.voicesipagent.pjsua2.SrtpPolicy
+import io.github.sparkcyf.voicesipagent.pjsua2.TlsCertificates
+import io.github.sparkcyf.voicesipagent.pjsua2.TlsPolicy
 import io.github.sparkcyf.voicesipagent.sip.SipAccount
 import io.github.sparkcyf.voicesipagent.sip.SipConfig
 import io.github.sparkcyf.voicesipagent.sip.SipLog
@@ -174,6 +176,8 @@ class GatewayRuntime private constructor(context: Context) {
     private var sipHoldCheckAt: Long? = null
     /** Why SIP is currently held unregistered by [startSip]; null while it may register. */
     @Volatile private var sipHeld: String? = null
+    /** Certificate policy of the running pjsua2 library's TLS transport; worker thread only. */
+    private var pjsuaTls: TlsPolicy? = null
     @Volatile private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private val dialerHandoffStore = DialerHandoffStore(app)
     private val dialerHandoff = DialerHandoff(app.packageName, dialerHandoffStore, object : DialerHandoff.Backend {
@@ -751,6 +755,7 @@ class GatewayRuntime private constructor(context: Context) {
                         port = s.port,
                         transport = transport,
                         srtp = srtp,
+                        tls = tlsPolicy(s).also { if (transport == SipTransport.TLS) pjsuaTls = it },
                         username = s.username,
                         password = s.password,
                         domain = s.domain.ifBlank { s.server },
@@ -786,9 +791,19 @@ class GatewayRuntime private constructor(context: Context) {
         }
     }
 
+    private fun tlsPolicy(s: GatewaySettings) = TlsPolicy(verifyServer = s.tlsVerify, caPem = s.tlsCa.ifEmpty { null })
+
     private fun stopSip(releaseLibrary: Boolean = false) {
         val previous = sip
         sip = null
+        // pjsip keeps TLS connections open after their listener closes and reuses them for new accounts,
+        // so another certificate policy needs a new library; recreating the transport is not enough.
+        val tlsChanged = settings.let { n ->
+            pjsuaTls != null && n.sipStack == SipStack.PJSUA2 && SipTransport.of(n.sipTransport) == SipTransport.TLS &&
+                tlsPolicy(n) != pjsuaTls
+        }
+        if (tlsChanged) AppLog.i("TLS certificate settings changed; restarting pjsua2")
+        val release = releaseLibrary || tlsChanged
         try {
             when (val s = previous) {
                 is SipUserAgent -> trackSipSocketRelease(s.stop())
@@ -796,14 +811,16 @@ class GatewayRuntime private constructor(context: Context) {
                     // Keep the SIP socket only if pjsua2 is about to take it over again.
                     val n = settings
                     s.stop(
-                        releaseTransport = releaseLibrary || !(n.takeover && n.sipStack == SipStack.PJSUA2 &&
+                        releaseTransport = release || !(n.takeover && n.sipStack == SipStack.PJSUA2 &&
                             n.localSipPort == s.config.localPort && SipTransport.of(n.sipTransport) == s.config.transport),
                     )
                 }
             }
         } finally {
-            if (releaseLibrary || !_health.value.takeover || settings.sipStack != SipStack.PJSUA2)
+            if (release || !_health.value.takeover || settings.sipStack != SipStack.PJSUA2) {
                 trackSipSocketRelease(PjsipEndpoint.stopLibrary())
+                pjsuaTls = null
+            }
         }
     }
 
@@ -1080,6 +1097,7 @@ class GatewayRuntime private constructor(context: Context) {
     fun settingsLine(): String {
         val s = pendingSettings ?: settings
         return "stack=${s.sipStack.id} server=${s.server}:${s.port}/${s.sipTransport} srtp=${s.srtp}" +
+            " tls_verify=${onOff(s.tlsVerify)} tls_ca=${tlsCaLabel(s.tlsCa)}" +
             " domain=${s.domain.ifEmpty { "(server)" }} user=${s.username}" +
             " password=${if (s.password.isEmpty()) "unset" else "set"} target=${s.inboundTarget.ifEmpty { "(user)" }}" +
             " prefixes=${s.allowedPrefixes.ifEmpty { "(any)" }}" +
@@ -1090,6 +1108,10 @@ class GatewayRuntime private constructor(context: Context) {
     }
 
     private fun onOff(on: Boolean) = if (on) "on" else "off"
+
+    /** No spaces: settingsLine is space-separated key=value pairs. */
+    private fun tlsCaLabel(pem: String) =
+        if (pem.isEmpty()) "system" else "custom:${runCatching { TlsCertificates.certificates(pem).size }.getOrDefault(0)}"
 
     private fun audioMethodName(method: Int) = when (method) {
         AudioMethod.LEGACY -> "direct"
@@ -1106,6 +1128,7 @@ class GatewayRuntime private constructor(context: Context) {
             appendLine("privileged=${h.privileged} ${h.privilegedDetail}")
             appendLine("sip=${h.sip.detail} ready=${h.sip.ready} stack=${settings.sipStack.id} " +
                 "transport=${settings.sipTransport} srtp=${settings.srtp} debugLog=${settings.sipDebugLog}")
+            appendLine("tlsVerify=${settings.tlsVerify} tlsCa=${TlsCertificates.label(settings.tlsCa)}")
             appendLine("sipHoldWhenNotReady=${settings.holdSipWhenNotReady} held=${sipHeld ?: "no"}")
             appendLine("cellular=${cellular.status.detail} inCallServiceBound=${CellularEndpoint.isInCallServiceBound} " +
                 "service=${CellularEndpoint.boundServiceDescription ?: "none"}")

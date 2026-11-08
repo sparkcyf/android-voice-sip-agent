@@ -6,6 +6,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import io.github.sparkcyf.voicesipagent.gateway.BusyPolicy
+import io.github.sparkcyf.voicesipagent.pjsua2.TlsCertificates
 import io.github.sparkcyf.voicesipagent.privileged.AudioMethod
 import io.github.sparkcyf.voicesipagent.privileged.CallAccess
 import io.github.sparkcyf.voicesipagent.telephony.DefaultSim
@@ -28,6 +29,10 @@ data class GatewaySettings(
     val sipTransport: String = "udp",
     /** off | optional | mandatory SDES-SRTP (pjsua2 over TLS only). */
     val srtp: String = "optional",
+    /** TLS only: verify the PBX certificate. Off accepts any certificate (pjsua2). */
+    val tlsVerify: Boolean = true,
+    /** TLS only: PEM bundle trusted instead of the Android system CAs; empty = system CAs (pjsua2). */
+    val tlsCa: String = "",
     /** pjsip info-level logging (development); errors/warnings are always logged. */
     val sipDebugLog: Boolean = false,
     /** Keep the SIP account unregistered while the cellular side is not ready, so the PBX can fail over. */
@@ -53,7 +58,7 @@ data class GatewaySettings(
     val sipConfigured: Boolean get() = server.isNotBlank() && username.isNotBlank() && password.isNotEmpty()
 
     override fun toString() =
-        "GatewaySettings(takeover=$takeover muteEarpiece=$muteEarpiece stack=$sipStack server=$server:$port/$sipTransport srtp=$srtp holdSip=$holdSipWhenNotReady user=$username target=$inboundTarget)"
+        "GatewaySettings(takeover=$takeover muteEarpiece=$muteEarpiece stack=$sipStack server=$server:$port/$sipTransport srtp=$srtp tlsVerify=$tlsVerify tlsCa=${TlsCertificates.label(tlsCa)} holdSip=$holdSipWhenNotReady user=$username target=$inboundTarget)"
 }
 
 enum class SipStack(val id: String) {
@@ -81,6 +86,8 @@ class SettingsStore(context: Context) {
         port = prefs.getInt("port", 5060),
         sipTransport = prefs.getString("sip_transport", "udp")!!,
         srtp = prefs.getString("srtp", "optional")!!,
+        tlsVerify = prefs.getBoolean("tls_verify", true),
+        tlsCa = prefs.getString("tls_ca", "")!!,
         sipDebugLog = prefs.getBoolean("sip_debug_log", false),
         holdSipWhenNotReady = prefs.getBoolean("hold_sip_when_not_ready", true),
         username = prefs.getString("username", "")!!,
@@ -107,6 +114,8 @@ class SettingsStore(context: Context) {
             .putInt("port", s.port)
             .putString("sip_transport", s.sipTransport.trim().lowercase())
             .putString("srtp", s.srtp.trim().lowercase())
+            .putBoolean("tls_verify", s.tlsVerify)
+            .putString("tls_ca", s.tlsCa)
             .putBoolean("sip_debug_log", s.sipDebugLog)
             .putBoolean("hold_sip_when_not_ready", s.holdSipWhenNotReady)
             .putString("username", s.username.trim())

@@ -94,6 +94,8 @@ Android 11 尚未测试。各厂商的隐藏 API 和音频 HAL 路由不同，�
 | PBX host / port | 注册服务器 / 代理地址 |
 | Transport | `udp`（局域网）、`tcp` 或 `tls`（仅 pjsua2） |
 | SRTP | `off`、`optional`（提供 SDES，对端不支持时退回 RTP）或 `mandatory`（不支持则 488）；仅在 TLS 下生效 |
+| Verify TLS certificate | 开启（默认）。关闭后接受任何服务器证书，见下文 |
+| Trusted certificates (TLS) | Android 系统 CA（默认），或导入的 PEM/DER 证书（取代系统 CA） |
 | SIP domain | 默认等于 PBX host |
 | User / password | PBX 上 trunk 的凭据 |
 | Cellular inbound → SIP target | 蜂窝来电时在 PBX 上呼叫的 DID；留空则使用 SIP 用户名 |
@@ -103,8 +105,15 @@ Android 11 尚未测试。各厂商的隐藏 API 和音频 HAL 路由不同，�
 点击 **Save & apply** 保存；通话中提交的修改会等待当前通话结束后生效。
 接管关闭时保存的 SIP 设置将在下次开启接管时使用。
 
-TLS 用 Android 系统 CA 库校验服务器证书链和主机名，仅支持 TLS 1.2/1.3，接受最左一级的 `*.` 通配证书（RFC 6125）。
-不做降级：TLS 失败就注册失败，每 30 s 重试。
+TLS 用 Android 系统 CA 库校验服务器证书链、有效期和主机名，仅支持 TLS 1.2/1.3，接受最左一级的 `*.` 通配证书（RFC 6125）。
+不做降级：TLS 失败就注册失败，每 30 s 重试。私有 PBX 可用以下两个选项（仅 pjsua2）：
+
+- **Import certificate**：只信任导入的证书，不再信任系统 CA。可以是企业私有 CA，也可以是 PBX 自己的自签名证书
+  （相当于钉住这张证书）。证书链、有效期和主机名照常校验，所以证书必须包含 **PBX host** 里填写的名字
+  （subject alternative name 中的 DNS 名或 IP 地址）。App 会列出每张证书的到期日和 SHA-256 指纹，可以与 PBX 上
+  `openssl x509 -noout -fingerprint -sha256 -in <文件>` 的输出比对。**Use system CAs** 恢复使用系统 CA。
+- **Verify TLS certificate** 关闭：接受任何证书，包括过期、自签名或名字不符的证书。此时能截获连接的人可以冒充 PBX，
+  读取或篡改 SIP 信令，包括 SRTP 密钥。只用于测试或可信网络。
 
 ### 配置文件
 
@@ -126,6 +135,8 @@ TLS 用 Android 系统 CA 库校验服务器证书链和主机名，仅支持 TL
     "port": 5061,
     "transport": "tls",
     "srtp": "optional",
+    "tlsVerify": true,
+    "tlsCa": "",
     "domain": "sip.example.org",
     "user": "android-gw",
     "password": "<secret>",
@@ -155,6 +166,8 @@ TLS 用 Android 系统 CA 库校验服务器证书链和主机名，仅支持 TL
 | `sip.stack` | `pjsua2` 或 `builtin` |
 | `sip.port`、`sip.localPort` | 1–65535；`localPort` 是自研栈的本地 UDP 端口 |
 | `sip.transport` / `sip.srtp` | `udp`、`tcp`、`tls` / `off`、`optional`、`mandatory` |
+| `sip.tlsVerify` | **Verify TLS certificate**；`false` 接受任何证书 |
+| `sip.tlsCa` | 信任的证书，整个 PEM 写成一个字符串（换行写作 `\n`）；`""` 表示 Android 系统 CA |
 | `sip.domain` | 留空表示使用 PBX 主机 |
 | `sip.holdWhenNotReady` | **Unregister while the phone cannot take calls** |
 | `sip.debugLog` | **pjsip debug log** |
@@ -214,6 +227,8 @@ adb shell am broadcast -n $R --es op sim-inbound --ei slot 0 --ez on false   # �
 adb shell am broadcast -n $R --es op loopback --ez on true   # 回声测试：蜂窝来电直接回声
 adb shell am broadcast -n $R --es op sip-debug --ez on true  # pjsip 详细日志
 adb shell am broadcast -n $R --es op provision --ez hold_sip false   # 未就绪时也保持注册
+adb shell am broadcast -n $R --es op provision --es tls_ca /sdcard/Android/data/io.github.sparkcyf.voicesipagent/files/pbx.pem   # 或 "system"
+adb shell am broadcast -n $R --es op provision --ez tls_verify false   # 接受任何 TLS 证书（不安全）
 adb shell am broadcast -n $R --es op provision --ei audio_method 2   # 0 Automatic，1 Call redirection，2 Direct telephony
 adb logcat -s VoiceSipAgent VsaPrivileged VsaTap
 ```

@@ -106,6 +106,8 @@ The handset microphone stays muted while bridging, so local listening does not e
 | PBX host / port | Registrar / proxy address |
 | Transport | `udp` (LAN), `tcp` or `tls` (pjsua2 only) |
 | SRTP | `off`, `optional` (offer SDES, fall back to RTP) or `mandatory` (488 otherwise); only effective with TLS |
+| Verify TLS certificate | On (default). Off accepts any server certificate; see below |
+| Trusted certificates (TLS) | Android system CAs (default), or imported PEM/DER certificates trusted instead of them |
 | SIP domain | Defaults to the PBX host |
 | User / password | Trunk credentials on the PBX |
 | Cellular inbound → SIP target | DID dialed on the PBX for incoming cellular calls; blank = the SIP user name |
@@ -115,9 +117,18 @@ The handset microphone stays muted while bridging, so local listening does not e
 Tap **Save & apply**; changes wait for current calls to end. With takeover off, saved SIP settings are
 used when takeover is next enabled.
 
-TLS validates the server certificate chain and host name against the Android system CA store (TLS 1.2/1.3 only)
-and accepts `*.` wildcard certificates in the left-most label (RFC 6125). There is no downgrade: if TLS fails,
-registration fails and is retried every 30 s.
+TLS validates the server certificate chain, validity period and host name against the Android system CA store
+(TLS 1.2/1.3 only) and accepts `*.` wildcard certificates in the left-most label (RFC 6125). There is no downgrade:
+if TLS fails, registration fails and is retried every 30 s. Two options cover private PBXs (pjsua2 only):
+
+- **Import certificate** trusts only the imported certificates instead of the system CAs: your private CA, or
+  the PBX's own self-signed certificate, which then works as a pin. The chain, validity period and host name are
+  still checked, so the certificate must name the host you enter as **PBX host** (DNS name or IP address in the
+  subject alternative name). The app lists each certificate with its expiry and SHA-256 fingerprint; compare it
+  with `openssl x509 -noout -fingerprint -sha256 -in <file>` on the PBX. **Use system CAs** removes them.
+- **Verify TLS certificate** off accepts any certificate: expired, self-signed or issued for another name.
+  Anyone who can intercept the connection can then impersonate the PBX and read or change SIP signalling,
+  including the SRTP keys. Use it only for testing or on a network you trust.
 
 ### Configuration file
 
@@ -140,6 +151,8 @@ imported changes wait for current calls to end. Import never turns takeover on o
     "port": 5061,
     "transport": "tls",
     "srtp": "optional",
+    "tlsVerify": true,
+    "tlsCa": "",
     "domain": "sip.example.org",
     "user": "android-gw",
     "password": "<secret>",
@@ -169,6 +182,8 @@ imported changes wait for current calls to end. Import never turns takeover on o
 | `sip.stack` | `pjsua2` or `builtin` |
 | `sip.port`, `sip.localPort` | 1–65535; `localPort` is the built-in stack's local UDP port |
 | `sip.transport` / `sip.srtp` | `udp`, `tcp`, `tls` / `off`, `optional`, `mandatory` |
+| `sip.tlsVerify` | **Verify TLS certificate**; `false` accepts any certificate |
+| `sip.tlsCa` | Trusted certificates as one PEM string (`\n` line breaks); `""` = Android system CAs |
 | `sip.domain` | Empty = the PBX host |
 | `sip.holdWhenNotReady` | **Unregister while the phone cannot take calls** |
 | `sip.debugLog` | **pjsip debug log** |
@@ -230,6 +245,8 @@ adb shell am broadcast -n $R --es op sim-inbound --ei slot 0 --ez on false   # l
 adb shell am broadcast -n $R --es op loopback --ez on true   # echo incoming cellular calls (test mode)
 adb shell am broadcast -n $R --es op sip-debug --ez on true  # verbose pjsip logging
 adb shell am broadcast -n $R --es op provision --ez hold_sip false   # stay registered while not ready
+adb shell am broadcast -n $R --es op provision --es tls_ca /sdcard/Android/data/io.github.sparkcyf.voicesipagent/files/pbx.pem   # or "system"
+adb shell am broadcast -n $R --es op provision --ez tls_verify false   # accept any TLS certificate (insecure)
 adb shell am broadcast -n $R --es op provision --ei audio_method 2   # 0 Automatic, 1 Call redirection, 2 Direct telephony
 adb logcat -s VoiceSipAgent VsaPrivileged VsaTap
 ```

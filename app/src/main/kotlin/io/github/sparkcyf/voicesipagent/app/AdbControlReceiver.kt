@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import io.github.sparkcyf.voicesipagent.pjsua2.SipTransport
 import io.github.sparkcyf.voicesipagent.pjsua2.SrtpPolicy
+import io.github.sparkcyf.voicesipagent.pjsua2.TlsCertificates
 import io.github.sparkcyf.voicesipagent.telephony.DefaultSim
 import java.io.File
 import java.io.IOException
@@ -22,6 +23,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  *   ... --es op default-sim --es sim system|refuse|<slot>   (SIM for PBX calls without X-VSA-SIMSLOT)
  *   ... --es op sim-inbound --ei slot 0 --ez on false      (leave that SIM's incoming calls to the phone app)
  *   ... --es op provision --es server sip.example.org --ei port 5061 --es transport tls --es domain sip.example.org [--es srtp optional]
+ *   ... --es op provision --es tls_ca /sdcard/Android/data/<package>/files/pbx.pem   (trust only these certificates; "system" = Android CAs)
+ *   ... --es op provision --ez tls_verify false   (accept any TLS certificate; insecure)
  *   ... --es op provision --ei audio_method 2      (0 auto, 1 redirection, 2 direct)
  *   ... --es op sip-debug --ez on true      (pjsip info-level logs; off by default)
  *   ... --es op provision --ez hold_sip false  (keep SIP registered while the cellular side is not ready)
@@ -80,7 +83,7 @@ class AdbControlReceiver : BroadcastReceiver() {
             "sip-stack" -> setOf("stack")
             "default-sim" -> setOf("sim")
             "sim-inbound" -> setOf("slot", "on")
-            "provision" -> setOf("server", "port", "transport", "srtp", "user", "password", "domain",
+            "provision" -> setOf("server", "port", "transport", "srtp", "tls_verify", "tls_ca", "user", "password", "domain",
                 "target", "prefixes", "audio_method", "call_access", "hold_sip")
             "import", "export" -> setOf("path")
             else -> invalid("unknown op; see README adb control")
@@ -144,6 +147,18 @@ class AdbControlReceiver : BroadcastReceiver() {
                 val srtp = intent.argument<String>("srtp")?.let {
                     SrtpPolicy.of(it)?.id ?: invalid("srtp must be off|optional|mandatory")
                 }
+                val tlsVerify = intent.argument<Boolean>("tls_verify")
+                val tlsCa = intent.argument<String>("tls_ca")?.let { path ->
+                    if (path == "system") return@let ""
+                    val file = externalFile(context, path)
+                    try {
+                        file.inputStream().use { TlsCertificates.normalize(TlsCertificates.read(it)) }
+                    } catch (e: TlsCertificates.Invalid) {
+                        invalid("${file.path}: ${e.message}")
+                    } catch (e: IOException) {
+                        invalid("cannot read ${file.path}: ${e.message}; put it in the app's external files dir")
+                    }
+                }
                 val user = intent.argument<String>("user")
                 val password = intent.argument<String>("password")
                 val domain = intent.argument<String>("domain")
@@ -160,6 +175,7 @@ class AdbControlReceiver : BroadcastReceiver() {
                         cur.copy(
                             server = server ?: cur.server, port = port ?: cur.port,
                             sipTransport = transport ?: cur.sipTransport, srtp = srtp ?: cur.srtp,
+                            tlsVerify = tlsVerify ?: cur.tlsVerify, tlsCa = tlsCa ?: cur.tlsCa,
                             username = user ?: cur.username, password = password ?: cur.password,
                             domain = domain ?: cur.domain, inboundTarget = target ?: cur.inboundTarget,
                             allowedPrefixes = prefixes ?: cur.allowedPrefixes,
@@ -217,12 +233,15 @@ class AdbControlReceiver : BroadcastReceiver() {
      * into it). Only the shell can send these commands; never let them reach app-private storage.
      */
     private fun configFile(context: Context, path: String?): File {
-        val externalDir = context.getExternalFilesDir(null)
-        val file = when {
-            path == null -> File(externalDir ?: invalid("app external storage unavailable; pass --es path"), ConfigFile.DEFAULT_NAME)
-            File(path).isAbsolute -> File(path)
-            else -> invalid("path must be absolute")
-        }.canonicalFile
+        if (path != null) return externalFile(context, path)
+        val externalDir = context.getExternalFilesDir(null) ?: invalid("app external storage unavailable; pass --es path")
+        return File(externalDir, ConfigFile.DEFAULT_NAME).canonicalFile
+    }
+
+    /** An absolute path outside app-private storage. */
+    private fun externalFile(context: Context, path: String): File {
+        if (!File(path).isAbsolute) invalid("path must be absolute")
+        val file = File(path).canonicalFile
         val private = listOfNotNull(context.dataDir, context.createDeviceProtectedStorageContext()?.dataDir)
         if (private.any { file.startsWith(it.canonicalFile) }) invalid("path must be outside the app's private storage")
         return file

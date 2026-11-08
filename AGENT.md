@@ -60,6 +60,7 @@ adb shell am broadcast -n $R --es op sip-stack --es stack pjsua2|builtin
 adb shell am broadcast -n $R --es op default-sim --es sim system|refuse|0|1   # SIM when X-VSA-SIMSLOT is absent
 adb shell am broadcast -n $R --es op sim-inbound --ei slot 0 --ez on false     # leave a SIM's incoming calls alone
 adb shell am broadcast -n $R --es op provision --es transport tls --es srtp optional …   # transport/srtp: pjsua2 only
+adb shell am broadcast -n $R --es op provision --es tls_ca <absolute path>|system --ez tls_verify true|false   # pjsua2 TLS only
 adb shell am broadcast -n $R --es op provision --ei audio_method 2   # 0 auto, 1 redirection, 2 direct; --ei call_access 0|1|2
 adb shell am broadcast -n $R --es op sip-debug --ez on true   # pjsip info-level logging, off by default (persisted)
 adb shell "am broadcast -n $R --es op provision --es prefixes ''"   # empty string args need an extra layer of quotes, or am says "Argument expected"
@@ -155,7 +156,13 @@ Module dependencies: `:voice-api` ← `:sip`, `:gateway` (pure JVM, testable on 
   return the same completion. A PBX reply is not required to release the socket.
 - **SIP (`:sip-pjsua2`)**: `PjsipEndpoint` implements `CallEndpoint` with the same trunk semantics as `:sip`.
   - pjsua is a process singleton: ordinary endpoint restarts reuse `PjsuaLib`; restarting the endpoint only
-    adds/removes accounts, transports (keyed by type + port) are kept and reused. Every pjsua call and SIP callback
+    adds/removes accounts, transports (keyed by type + port) are kept and reused. A TLS transport also records its
+    `TlsPolicy` (verify on/off, trusted PEM bundle or system CAs), fixed by pjsip at transport creation.
+    Closing a TLS listener leaves its connections open and new accounts reuse them (seen on the Pixel: a changed
+    trust store still registered over the old connection), so `GatewayRuntime.stopSip` restarts the whole library
+    when the policy changes and `PjsuaLib.transport` refuses a mismatched policy. Imported certificates replace
+    the system CAs (`TlsCertificates` normalizes them to certificates only); host name checking stays on unless
+    verification is off. Every pjsua call and SIP callback
     runs on a single `pjsua` thread (`threadCnt=0` + `mainThreadOnly`, looping over a task queue and
     `libHandleEvents`). The SIP event wait is capped at 100 ms without call media and 10 ms with media;
     sockets and native timer deadlines wake it earlier, while queued app controls can wait up to 100 ms.

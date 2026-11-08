@@ -4,7 +4,7 @@ enum class SipTransport(val id: String, val defaultPort: Int) {
     UDP("udp", 5060),
     TCP("tcp", 5060),
 
-    /** Server certificate and host name are verified against the Android system CA store. */
+    /** Server certificate checked as [TlsPolicy] says: by default chain, expiry and host name against the Android system CAs. */
     TLS("tls", 5061),
     ;
 
@@ -29,6 +29,19 @@ enum class SrtpPolicy(val id: String) {
     }
 }
 
+/** How the TLS server certificate is checked. pjsip fixes this when the transport is created. */
+data class TlsPolicy(
+    /**
+     * false accepts any certificate (self-signed, expired, wrong host name). Signalling, including the SDES-SRTP
+     * keys, is then open to anyone who can intercept the connection.
+     */
+    val verifyServer: Boolean = true,
+    /** PEM certificates trusted instead of the Android system CAs (see [TlsCertificates]); null = system CAs. */
+    val caPem: String? = null,
+) {
+    override fun toString() = "verify=${if (verifyServer) "on" else "off"} ca=${TlsCertificates.label(caPem)}"
+}
+
 data class PjsipConfig(
     /** Registrar / outbound proxy host (IP or name). */
     val server: String,
@@ -44,6 +57,8 @@ data class PjsipConfig(
     val localPort: Int = 5062,
     /** SDES-SRTP policy. Only applied over TLS: without it the keys would travel in clear, so SRTP is off. */
     val srtp: SrtpPolicy = SrtpPolicy.OPTIONAL,
+    /** Only used with [SipTransport.TLS]. */
+    val tls: TlsPolicy = TlsPolicy(),
     val registerExpiresSec: Int = 300,
     val rtpPortStart: Int = 10000,
     val rtpPortCount: Int = 10000,
@@ -54,7 +69,8 @@ data class PjsipConfig(
     /** Only accept INVITEs from the registrar's address (LAN deployment). */
     val acceptOnlyFromServer: Boolean = true,
 ) {
-    override fun toString() = "PjsipConfig($username@$server:$port/${transport.id} srtp=${srtp.id} local=$localPort)"
+    override fun toString() = "PjsipConfig($username@$server:$port/${transport.id} srtp=${srtp.id}" +
+        (if (transport == SipTransport.TLS) " tls[$tls]" else "") + " local=$localPort)"
 }
 
 /** Logging hook; pjsip's own log lines are passed through with long digit runs redacted. */

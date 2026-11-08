@@ -11,7 +11,6 @@ import org.pjsip.pjsua2.pj_log_decoration
 import org.pjsip.pjsua2.pjsip_transport_type_e
 import java.security.KeyStore
 import java.security.cert.X509Certificate
-import java.util.Base64
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.ScheduledFuture
 
@@ -43,7 +42,8 @@ internal object PjsuaLib {
     private var endpoint: Endpoint? = null
     val ep: Endpoint get() = endpoint ?: error("pjsua2 stopped")
     private var logWriter: LogWriter? = null
-    private val transports = HashMap<Pair<SipTransport, Int>, Int>()
+    /** Open transports by type and local port; TLS ones remember the certificate policy they were created with. */
+    private val transports = HashMap<Pair<SipTransport, Int>, Pair<Int, TlsPolicy?>>()
 
     val running: Boolean get() = worker.running
 
@@ -98,8 +98,17 @@ internal object PjsuaLib {
         }
     }
 
-    /** Shared transport per type and local port; kept open so endpoint restarts can rebind instantly. */
-    fun transport(type: SipTransport, port: Int): Int = transports.getOrPut(type to port) {
+    /**
+     * Shared transport per type and local port; kept open so endpoint restarts can rebind instantly.
+     * A TLS transport keeps the certificate policy it was created with. pjsip keeps its connections open
+     * after the listener closes and reuses them for new accounts, so a different [tls] needs a new library.
+     */
+    fun transport(type: SipTransport, port: Int, tls: TlsPolicy = TlsPolicy()): Int {
+        val policy = tls.takeIf { type == SipTransport.TLS }
+        transports[type to port]?.let { (id, current) ->
+            check(current == policy) { "TLS certificate policy changed; restart the pjsua2 library first" }
+            return id
+        }
         val cfg = TransportConfig()
         cfg.port = port.toLong()
         val pjType = when (type) {
@@ -107,19 +116,25 @@ internal object PjsuaLib {
             SipTransport.TCP -> pjsip_transport_type_e.PJSIP_TRANSPORT_TCP
             SipTransport.TLS -> {
                 cfg.tlsConfig.apply {
-                    caBuf = systemCaPem()
-                    verifyServer = true
+                    caBuf = policy!!.caPem ?: systemCaPem()
+                    verifyServer = policy.verifyServer
                     proto = (pj_ssl_sock_proto.PJ_SSL_SOCK_PROTO_TLS1_2 or pj_ssl_sock_proto.PJ_SSL_SOCK_PROTO_TLS1_3).toLong()
                 }
+                policy!!.caPem?.let { pem ->
+                    TlsCertificates.certificates(pem).forEach { log.info("TLS trusts only: ${TlsCertificates.describe(it)}") }
+                }
+                if (!policy.verifyServer) log.warn("TLS server certificate verification is OFF: any certificate is accepted")
                 pjsip_transport_type_e.PJSIP_TRANSPORT_TLS
             }
         }
-        ep.transportCreate(pjType, cfg).also { cfg.delete() }
+        val id = ep.transportCreate(pjType, cfg).also { cfg.delete() }
+        transports[type to port] = id to policy
+        return id
     }
 
     /** Graceful: pjsua destroys the socket once pending transactions (e.g. the unregister) finish. */
     fun closeTransport(type: SipTransport, port: Int) {
-        val id = transports.remove(type to port) ?: return
+        val id = transports.remove(type to port)?.first ?: return
         try {
             ep.transportClose(id)
         } catch (e: Exception) {
@@ -130,13 +145,12 @@ internal object PjsuaLib {
     /** The Android system trust store as one PEM bundle for OpenSSL. */
     private fun systemCaPem(): String {
         val ks = KeyStore.getInstance("AndroidCAStore").apply { load(null) }
-        val enc = Base64.getMimeEncoder(64, "\n".toByteArray())
         val sb = StringBuilder()
         var n = 0
         for (alias in ks.aliases()) {
             if (!alias.startsWith("system:")) continue
             val cert = ks.getCertificate(alias) as? X509Certificate ?: continue
-            sb.append("-----BEGIN CERTIFICATE-----\n").append(enc.encodeToString(cert.encoded)).append("\n-----END CERTIFICATE-----\n")
+            sb.append(TlsCertificates.pem(cert))
             n++
         }
         log.info("TLS trust store: $n system CAs")

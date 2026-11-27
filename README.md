@@ -50,9 +50,12 @@ Tested on:
 | Samsung Galaxy A15 5G (One UI) | 16 | Same¹ |
 | Redmi Note 13 Pro (HyperOS 2, MT6789) | 15 | Same¹ |
 | Infinix X678B | 14 | Registers; call audio not tested¹ |
+| TECNO SPARK 8C (MediaTek) | 12 | Two-way audio with sip.linphone.org (TLS + SRTP); Shizuku 13.5.4, call-audio mute off² |
 
 ¹ Community report ([#1](../../issues/1)). Other audio settings did not give two-way audio on these devices; see
 [Troubleshooting](#troubleshooting).
+
+² Community report ([#3](../../issues/3)).
 
 Verified: inbound and outbound calls, two-way audio, DTMF (RFC 4733), Wi-Fi reconnect (also mid-call), overnight
 Doze standby, long calls without clock drift, handset muting, LAN calls over UDP and public calls over TLS + SRTP
@@ -424,6 +427,17 @@ configuration:
   calls arrive over the TLS connection the phone already opened — no open ports on the phone.
 - Requests from Asterisk are routed by Request-URI user part, hence the `X-VSA-Dial` dial plan above.
 - Phone settings: `server = domain = <flexisip domain>`, `port = 5061`, `transport = tls`, `srtp = optional`.
+
+### Without a PBX: free Linphone accounts
+
+For a single phone you can skip the PBX: register the gateway and your other device (for example
+Linphone on an iPhone) as two free accounts on `sip.linphone.org` (TLS on 5061, SRTP mandatory on
+both sides) and set the gateway's inbound target to the second account. Outbound calls work by
+dialing `sip:<gateway-account>@sip.linphone.org?X-VSA-Dial=<number>` from Linphone. Note that the
+gateway does not authenticate callers, so restrict the allowed dial-out prefixes.
+
+Community step-by-step guide (Turkish/English, with maintenance scripts):
+[iphone-hat-koprusu](https://github.com/mustafayusufaksoy/iphone-hat-koprusu).
 
 ## Building from source
 
